@@ -1,6 +1,5 @@
 services:
   marionette:
-    build: .
     image: ghcr.io/shniranjan/marionette:latest
     container_name: marionette
     ports:
