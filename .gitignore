@@ -1,0 +1,35 @@
+# Rust
+core/target/
+**/*.rs.bk
+
+# Node
+node_modules/
+gateway/node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Python (scripts)
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Stacks (mounted volume)
+stacks/
+
+# Data (SQLite audit DB)
+data/
+
+# Build artifacts
+*.tar.gz

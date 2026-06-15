@@ -1,0 +1,63 @@
+# ── Stage 1: Rust core build ─────────────────────────────────
+FROM rust:1.85-alpine AS rust-builder
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
+WORKDIR /build
+COPY core/Cargo.toml core/Cargo.lock* ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs
+RUN cargo build --release 2>/dev/null || true
+RUN rm -rf src
+COPY core/src/ ./src/
+RUN cargo build --release --bin marionette-core
+RUN strip target/release/marionette-core
+
+# ── Stage 2: Frontend build ──────────────────────────────────
+FROM node:22-alpine AS frontend-builder
+WORKDIR /build
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# ── Stage 3: Gateway build ───────────────────────────────────
+FROM node:22-alpine AS gateway-builder
+WORKDIR /build
+COPY gateway/package.json gateway/package-lock.json* ./
+RUN npm install
+COPY gateway/tsconfig.json ./
+COPY gateway/src/ ./src/
+RUN npm run build
+
+# ── Stage 4: Runtime ─────────────────────────────────────────
+FROM alpine:3.21
+RUN apk add --no-cache \
+    nodejs \
+    npm \
+    supervisor \
+    curl \
+    ca-certificates \
+    docker-cli \
+    docker-cli-compose
+
+WORKDIR /app
+
+# Copy Rust binary
+COPY --from=rust-builder /build/target/release/marionette-core /usr/local/bin/
+
+# Copy gateway (production deps + built JS)
+COPY --from=gateway-builder /build/package.json /build/package-lock.json* /app/gateway/
+RUN cd /app/gateway && npm install --omit=dev
+COPY --from=gateway-builder /build/dist/ /app/gateway/dist/
+
+# Copy frontend SPA
+COPY --from=frontend-builder /build/dist/ /app/frontend/dist/
+
+# Copy supervisor config + entrypoint
+COPY supervisord.conf /app/
+COPY scripts/entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 8000
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
+    CMD curl -sf http://localhost:8000/api/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

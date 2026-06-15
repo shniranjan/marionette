@@ -1,0 +1,31 @@
+[package]
+name = "marionette-core"
+version = "0.1.0"
+edition = "2021"
+description = "Marionette — Docker Infrastructure Management Platform (core)"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["query"] }
+bollard = "0.17"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+urlencoding = "2"
+[target.'cfg(unix)'.dependencies]
+hyperlocal = "0.9"
