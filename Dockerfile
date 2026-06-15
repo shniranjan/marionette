@@ -1,11 +1,8 @@
 # ── Stage 1: Rust core build ─────────────────────────────────
 FROM rust:1.96-alpine AS rust-builder
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig gcc make
 WORKDIR /build
-COPY core/Cargo.toml core/Cargo.lock* ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs
-RUN cargo build --release 2>/dev/null || true
-RUN rm -rf src
+COPY core/Cargo.toml core/Cargo.lock ./
 COPY core/src/ ./src/
 RUN cargo build --release --bin marionette-core
 RUN strip target/release/marionette-core
@@ -21,7 +18,7 @@ RUN npm run build
 # ── Stage 3: Gateway build ───────────────────────────────────
 FROM node:22-alpine AS gateway-builder
 WORKDIR /build
-COPY gateway/package.json gateway/package-lock.json* ./
+COPY gateway/package.json gateway/package-lock.json ./
 RUN npm install
 COPY gateway/tsconfig.json ./
 COPY gateway/src/ ./src/
@@ -44,7 +41,7 @@ WORKDIR /app
 COPY --from=rust-builder /build/target/release/marionette-core /usr/local/bin/
 
 # Copy gateway (production deps + built JS)
-COPY --from=gateway-builder /build/package.json /build/package-lock.json* /app/gateway/
+COPY --from=gateway-builder /build/package.json /build/package-lock.json /app/gateway/
 RUN cd /app/gateway && npm install --omit=dev
 COPY --from=gateway-builder /build/dist/ /app/gateway/dist/
 
@@ -55,6 +52,9 @@ COPY --from=frontend-builder /build/dist/ /app/frontend/dist/
 COPY supervisord.conf /app/
 COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Required dirs
+RUN mkdir -p /data /stacks
 
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
