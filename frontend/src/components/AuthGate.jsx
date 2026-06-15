@@ -8,19 +8,21 @@ export default function AuthGate({ onSuccess }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!key.trim()) return;
     setLoading(true);
     setError('');
 
     try {
-      // Validate by hitting the health endpoint
-      const res = await fetch('/api/health', {
-        headers: { 'X-Marionette-Key': key.trim() },
-      });
+      const headers = {};
+      if (key.trim()) {
+        headers['X-Marionette-Key'] = key.trim();
+      }
+      const res = await fetch('/api/health', { headers });
       if (!res.ok) {
         throw new Error('Invalid authentication key');
       }
-      setKey(key.trim());
+      if (key.trim()) {
+        setKey(key.trim());
+      }
       onSuccess();
     } catch (err) {
       setError(err.message || 'Failed to authenticate');
@@ -52,7 +54,7 @@ export default function AuthGate({ onSuccess }) {
             type="password"
             value={key}
             onChange={(e) => setKeyInput(e.target.value)}
-            placeholder="Enter your Marionette key..."
+            placeholder="Leave empty for dev mode..."
             style={{ width: '100%', marginBottom: '12px' }}
             autoFocus
           />
@@ -68,13 +70,16 @@ export default function AuthGate({ onSuccess }) {
               {error}
             </div>
           )}
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+            {key.trim() ? 'Connect with your access key' : 'Dev mode — no key required'}
+          </p>
           <button
             type="submit"
             className="btn-primary"
-            disabled={loading || !key.trim()}
+            disabled={loading}
             style={{ width: '100%', padding: '10px' }}
           >
-            {loading ? 'Authenticating...' : 'Connect'}
+            {loading ? 'Connecting...' : 'Connect'}
           </button>
         </form>
       </div>
