@@ -37,3 +37,5 @@ data/
 # Editor/IDE folders
 .folders
 .hermes/
+gateway/dist/
+docs/project-inception-*
