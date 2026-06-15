@@ -1,5 +1,5 @@
 # ── Stage 1: Rust core build ─────────────────────────────────
-FROM rust:1.85-alpine AS rust-builder
+FROM rust:1.96-alpine AS rust-builder
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 WORKDIR /build
 COPY core/Cargo.toml core/Cargo.lock* ./
