@@ -307,7 +307,7 @@ docker system prune -a
 1. **Mismatched key.** The key in the browser doesn't match `MARIONETTE_KEY` on the server.
    ```bash
    # Clear the stored key in browser:
-   # localStorage.removeItem('doll_key')
+   # localStorage.removeItem('marionette_key')
    # Refresh page, re-enter key
    ```
 

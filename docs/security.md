@@ -57,7 +57,7 @@ After all clients have switched to the new key, remove the old one.
 
 ### Frontend key storage
 
-- Key stored in `localStorage` as `doll_key`
+- Key stored in `localStorage` as `marionette_key`
 - Auto-attached to all fetch calls via `api/client.js`
 - On 401 response → key cleared, auth gate shown
 - Key never appears in URL parameters
@@ -196,8 +196,8 @@ server {
     }
 
     # Access key at the reverse proxy level (optional, defense-in-depth)
-    # set $doll_key "your-key";
-    # if ($http_x_doll_key != $doll_key) { return 401; }
+    # set $marionette_key "your-key";
+    # if ($http_x_marionette_key != $marionette_key) { return 401; }
 }
 ```
 

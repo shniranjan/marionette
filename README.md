@@ -155,6 +155,21 @@ See [Security](docs/security.md) for the full threat model and mitigations.
 
 ---
 
+## Disclaimer
+
+**This software is provided "as is", without warranty of any kind.** Marionette interacts directly with the Docker daemon and can start, stop, remove, and migrate containers. These are destructive operations.
+
+- **Data loss:** Container removal, volume pruning, and migration can result in permanent data loss. Always back up before migrating.
+- **Service disruption:** Stopping, restarting, or migrating containers will cause downtime. Test in staging environments first.
+- **Access control:** Anyone with the `MARIONETTE_KEY` has full control over your Docker infrastructure. Use a strong key, rotate it regularly, and never expose it in client-side code or logs.
+- **Migration:** The migration wizard generates shell commands for you to run manually. Review every command before executing. Marionette does not validate the safety of generated commands.
+- **Remote hosts:** Connecting to remote Docker hosts via Socket Proxy extends the attack surface. Use TLS, firewalls, and granular proxy permissions.
+- **No liability:** The authors and contributors are not responsible for any damage, data loss, or service disruption caused by the use of this software.
+
+**By using marionette, you accept these risks.**
+
+---
+
 ## License
 
 GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
