@@ -33,3 +33,6 @@ data/
 
 # Build artifacts
 *.tar.gz
+
+# Editor/IDE folders
+.folders
