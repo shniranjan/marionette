@@ -32,6 +32,7 @@ RUN apk add --no-cache \
     supervisor \
     curl \
     ca-certificates \
+    openssl \
     docker-cli \
     docker-cli-compose \
     nginx

@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import Modal from '../components/Modal';
 import JsonTree from '../components/JsonTree';
 import Spinner from '../components/Spinner';
+import ListToolbar, { useSelection } from '../components/ListToolbar';
 
 export default function Images() {
   const [images, setImages] = useState([]);
@@ -28,6 +29,8 @@ export default function Images() {
 
   useEffect(() => { load(); }, [load]);
 
+  const { selected, toggle, selectAll, clear } = useSelection(images, 'id');
+
   const handlePull = async () => {
     if (!pullImage.trim()) return;
     setPulling(true);
@@ -44,14 +47,14 @@ export default function Images() {
     }
   };
 
-  const handleRemove = async (id) => {
-    if (!confirm('Remove this image?')) return;
-    try {
-      await api.delete(`/api/images/${id}`);
-      load();
-    } catch (err) {
-      alert('Error: ' + err.message);
+  const handleRemove = async () => {
+    const ids = Array.from(selected);
+    if (!confirm(`Remove ${ids.length} image(s)?`)) return;
+    for (const id of ids) {
+      try { await api.delete(`/api/images/${id}`); } catch (e) { alert('Error: ' + e.message); }
     }
+    clear();
+    load();
   };
 
   const handleInspect = async (id) => {
@@ -77,38 +80,54 @@ export default function Images() {
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}
 
+      <ListToolbar
+        selected={selected}
+        total={images.length}
+        onClear={clear}
+        actions={[
+          { label: '🗑 Remove', onClick: handleRemove, variant: 'danger' },
+        ]}
+      />
+
       {images.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No images</div>
       ) : (
         <div style={{ display: 'grid', gap: '12px' }}>
           {images.map((img) => {
             const tags = img.repoTags || [];
+            const isSel = selected.has(img.id);
             return (
-              <div key={img.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div className="mono" style={{ fontWeight: 600 }}>
-                    {tags.length > 0 ? tags[0].replace(/^<none>:<none>$/, '<none>') : img.id?.substring(0, 12)}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    ID: {img.id?.substring(0, 12)} &nbsp;|&nbsp;
-                    Size: {formatSize(img.size)} &nbsp;|&nbsp;
-                    Created: {img.created ? new Date(img.created * 1000).toLocaleDateString() : '—'}
-                    {tags.length > 1 && (
-                      <span> &nbsp;|&nbsp; Tags: {tags.join(', ')}</span>
-                    )}
+              <div key={img.id}
+                className="card"
+                onClick={() => handleInspect(img.id)}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <input
+                    type="checkbox"
+                    checked={isSel}
+                    onChange={(e) => { e.stopPropagation(); toggle(img); }}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <div>
+                    <div className="mono" style={{ fontWeight: 600 }}>
+                      {tags.length > 0 ? tags[0].replace(/^<none>:<none>$/, '<none>') : img.id?.substring(0, 12)}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)', marginTop: '4px' }}>
+                      ID: {img.id?.substring(0, 12)} &nbsp;|&nbsp;
+                      Size: {formatSize(img.size)} &nbsp;|&nbsp;
+                      Created: {img.created ? new Date(img.created * 1000).toLocaleDateString() : '—'}
+                      {tags.length > 1 && <span> &nbsp;|&nbsp; {tags.slice(1).join(', ')}</span>}
+                    </div>
                   </div>
                 </div>
-                <div className="btn-group">
-                  <button className="btn-sm" onClick={() => handleInspect(img.id)}>🔍 Inspect</button>
-                  <button className="btn-danger btn-sm" onClick={() => handleRemove(img.id)}>🗑 Remove</button>
-                </div>
+                <span style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)' }}>Click to inspect</span>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Pull Modal */}
       {showPull && (
         <Modal
           title="Pull Image"
@@ -142,7 +161,6 @@ export default function Images() {
         </Modal>
       )}
 
-      {/* Inspect Modal */}
       {inspectData && (
         <Modal title="Image Inspect" onClose={() => setInspectData(null)}>
           <JsonTree data={inspectData} />

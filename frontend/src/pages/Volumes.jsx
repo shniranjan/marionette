@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import Modal from '../components/Modal';
 import JsonTree from '../components/JsonTree';
 import Spinner from '../components/Spinner';
+import ListToolbar, { useSelection } from '../components/ListToolbar';
 
 export default function Volumes() {
   const [volumes, setVolumes] = useState([]);
@@ -28,6 +29,8 @@ export default function Volumes() {
 
   useEffect(() => { load(); }, [load]);
 
+  const { selected, toggle, selectAll, clear } = useSelection(volumes, 'name');
+
   const handleCreate = async () => {
     if (!newName.trim()) return;
     setCreating(true);
@@ -43,14 +46,14 @@ export default function Volumes() {
     }
   };
 
-  const handleRemove = async (name) => {
-    if (!confirm(`Remove volume "${name}"?`)) return;
-    try {
-      await api.delete(`/api/volumes/${name}`);
-      load();
-    } catch (err) {
-      alert('Error: ' + err.message);
+  const handleRemove = async () => {
+    const names = Array.from(selected);
+    if (!confirm(`Remove ${names.length} volume(s)?`)) return;
+    for (const name of names) {
+      try { await api.delete(`/api/volumes/${name}`); } catch (e) { alert('Error: ' + e.message); }
     }
+    clear();
+    load();
   };
 
   const handlePrune = async () => {
@@ -88,37 +91,50 @@ export default function Volumes() {
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}
 
+      <ListToolbar
+        selected={selected}
+        total={volumes.length}
+        onClear={clear}
+        actions={[
+          { label: '🗑 Remove', onClick: handleRemove, variant: 'danger' },
+        ]}
+      />
+
       {volumes.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No volumes</div>
       ) : (
         <table>
           <thead>
             <tr>
+              <th style={{ width: '32px' }}></th>
               <th>Name</th>
               <th>Driver</th>
               <th>Mountpoint</th>
-              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {volumes.map((v) => (
-              <tr key={v.name}>
-                <td className="mono">{v.name}</td>
-                <td>{v.driver}</td>
-                <td className="mono" style={{ fontSize: '0.75rem' }}>{v.mountpoint}</td>
-                <td>
-                  <div className="btn-group">
-                    <button className="btn-sm" onClick={() => handleInspect(v.name)}>🔍 Inspect</button>
-                    <button className="btn-danger btn-sm" onClick={() => handleRemove(v.name)}>🗑</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {volumes.map((v) => {
+              const isSel = selected.has(v.name);
+              return (
+                <tr key={v.name} onClick={() => handleInspect(v.name)} style={{ cursor: 'pointer' }}>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isSel}
+                      onChange={() => toggle(v)}
+                      style={{ width: '14px', height: '14px' }}
+                    />
+                  </td>
+                  <td className="mono">{v.name}</td>
+                  <td>{v.driver}</td>
+                  <td className="mono" style={{ fontSize: '0.75rem' }}>{v.mountpoint}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
 
-      {/* Create Modal */}
       {showCreate && (
         <Modal
           title="Create Volume"
@@ -154,7 +170,6 @@ export default function Volumes() {
         </Modal>
       )}
 
-      {/* Inspect Modal */}
       {inspectData && (
         <Modal title="Volume Inspect" onClose={() => setInspectData(null)}>
           <JsonTree data={inspectData} />

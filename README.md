@@ -13,16 +13,13 @@ A centralized Docker infrastructure management platform. Manage containers, imag
 # Clone and build
 git clone https://github.com/shniranjan/marionette.git
 cd marionette
-
-# (Optional) Generate self-signed TLS certificate for HTTPS
-./scripts/generate-cert.sh
-
-# Uncomment the TLS lines in docker-compose.yml, then:
 docker compose up -d --build
 
-# HTTP:  http://localhost:8000
-# HTTPS: https://localhost:8000 (if TLS enabled)
+# Open https://localhost:8000 (self-signed cert on first run)
+# Or http://localhost:8000 if TLS certs aren't mounted
 ```
+
+> **TLS is automatic.** On first start, Marionette generates a self-signed certificate. Your browser will show a warning — accept it on LAN. Mount your own cert at `./certs/` to override. See [TLS Configuration](#tls-configuration).
 
 Or with docker-compose:
 
@@ -38,11 +35,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./stacks:/stacks
       - ./data:/data
-      # - ./certs:/app/certs:ro          # uncomment for HTTPS
+      - ./certs:/app/certs               # TLS cert persistence
     environment:
       - MARIONETTE_KEY=${MARIONETTE_KEY:-}
-      # - TLS_KEY=/app/certs/marionette-key.pem    # uncomment for HTTPS
-      # - TLS_CERT=/app/certs/marionette-cert.pem  # uncomment for HTTPS
+      # - TLS_KEY=/path/to/your/key.pem   # optional: use your own cert
+      # - TLS_CERT=/path/to/your/cert.pem
     restart: unless-stopped
 ```
 
@@ -115,7 +112,35 @@ For full architecture details, see [Architecture](docs/architecture.md).
 
 ---
 
-## Configuration
+## TLS Configuration
+
+Marionette auto-generates a self-signed TLS certificate on first startup. HTTPS works immediately — your browser will show a warning; accept it for LAN use.
+
+### Using your own certificate
+
+Mount your cert files to `/app/certs/` and set the env vars:
+
+```yaml
+volumes:
+  - ./certs:/app/certs              # certs persisted across restarts
+environment:
+  - TLS_KEY=/app/certs/privkey.pem  # path inside container
+  - TLS_CERT=/app/certs/fullchain.pem
+```
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `TLS_KEY` | auto-generated | Path to TLS private key (PEM) |
+| `TLS_CERT` | auto-generated | Path to TLS certificate (PEM) |
+| `TLS_CERT_DIR` | `/app/certs` | Where auto-generated cert is stored |
+
+### Behavior
+
+1. If `TLS_KEY` and `TLS_CERT` are set and files exist → use them
+2. If `./certs` is mounted and contains a previously generated cert → reuse it
+3. Otherwise → auto-generate a self-signed cert on first run
+
+The cert persists across restarts when `./certs:/app/certs` is mounted. Remove the volume to regenerate.
 
 | Env Var | Required | Default | Description |
 |---------|:--------:|---------|-------------|

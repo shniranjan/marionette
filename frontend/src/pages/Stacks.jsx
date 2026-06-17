@@ -89,13 +89,16 @@ export default function Stacks() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (deployAfter = false) => {
     if (!showEdit) return;
     setEditSaving(true);
     try {
       await api.put(`/api/stacks/${showEdit}`, { content: editYml });
       setShowEdit(null);
       load();
+      if (deployAfter) {
+        setTimeout(() => handleAction(showEdit, 'deploy'), 300);
+      }
     } catch (err) {
       alert('Error: ' + err.message);
     } finally {
@@ -215,8 +218,11 @@ export default function Stacks() {
           footer={
             <>
               <button onClick={() => setShowEdit(null)}>Cancel</button>
-              <button className="btn-primary" onClick={handleSave} disabled={editSaving}>
-                {editSaving ? 'Saving...' : 'Save Changes'}
+              <button className="btn-primary" onClick={() => handleSave(true)} disabled={editSaving}>
+                {editSaving ? 'Saving...' : 'Save & Deploy'}
+              </button>
+              <button onClick={() => handleSave(false)} disabled={editSaving}>
+                {editSaving ? 'Saving...' : 'Save Only'}
               </button>
             </>
           }

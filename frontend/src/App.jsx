@@ -17,6 +17,7 @@ import Migration from './pages/Migration';
 import Swarm from './pages/Swarm';
 import Nginx from './pages/Nginx';
 import ErrorBoundary from './components/ErrorBoundary';
+import MaintenanceOverlay from './components/MaintenanceOverlay';
 
 const PAGES = {
   dashboard: Dashboard,
@@ -81,8 +82,9 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <ToastStyles />
-      <div className="app-layout">
+    <ToastStyles />
+    <MaintenanceOverlay />
+    <div className="app-layout">
         <Sidebar
           currentPage={page}
           onNavigate={navigate}

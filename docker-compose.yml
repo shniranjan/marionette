@@ -9,16 +9,16 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./stacks:/stacks
       - ./data:/data
-      # Optional: mount TLS certificates for HTTPS (generate with: ./scripts/generate-cert.sh)
-      # - ./certs:/app/certs:ro
+      # Persist auto-generated TLS cert across restarts (optional)
+      - ./certs:/app/certs
     environment:
       - MARIONETTE_KEY=${MARIONETTE_KEY:-}
       - MARIONETTE_STACKS_DIR=${MARIONETTE_STACKS_DIR:-/stacks}
       - MARIONETTE_LOG_LEVEL=${MARIONETTE_LOG_LEVEL:-info}
       - MARIONETTE_DB_PATH=${MARIONETTE_DB_PATH:-/data/marionette.db}
-      # Optional: enable HTTPS (requires certs mounted above)
-      # - TLS_KEY=/app/certs/marionette-key.pem
-      # - TLS_CERT=/app/certs/marionette-cert.pem
+      # To use your own TLS cert, set these:
+      # - TLS_KEY=/path/to/key.pem
+      # - TLS_CERT=/path/to/cert.pem
     restart: unless-stopped
     networks:
       - marionette-net
