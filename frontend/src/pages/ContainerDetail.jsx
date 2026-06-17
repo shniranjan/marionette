@@ -6,6 +6,7 @@ import JsonTree from '../components/JsonTree';
 import SecretMask from '../components/SecretMask';
 import ActionBar from '../components/ActionBar';
 import Spinner from '../components/Spinner';
+import StatusBadge from '../components/StatusBadge';
 
 const TABS = ['info', 'logs', 'stats', 'env', 'mounts', 'network'];
 
