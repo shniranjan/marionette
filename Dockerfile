@@ -33,7 +33,8 @@ RUN apk add --no-cache \
     curl \
     ca-certificates \
     docker-cli \
-    docker-cli-compose
+    docker-cli-compose \
+    nginx
 
 WORKDIR /app
 
@@ -54,10 +55,13 @@ COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Required dirs
-RUN mkdir -p /data /stacks
+RUN mkdir -p /data /stacks /etc/nginx/upstreams /run/nginx
+
+# Configure nginx to include marionette upstreams
+RUN echo 'include /etc/nginx/upstreams/*.conf;' >> /etc/nginx/http.d/default.conf
 
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-    CMD curl -sf http://localhost:8000/api/health || exit 1
+    CMD curl -sf http://localhost:9119/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
