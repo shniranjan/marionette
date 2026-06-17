@@ -30,7 +30,16 @@ pub async fn read_stack(
     State(state): State<Arc<crate::AppState>>,
     Path(name): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let file_path = state.stacks_dir.join(&name).join("docker-compose.yml");
+    let dir = state.stacks_dir.join(&name);
+    let compose_path = dir.join("docker-compose.yml");
+    let alt_path = dir.join("compose.yml");
+    let file_path = if compose_path.exists() {
+        &compose_path
+    } else if alt_path.exists() {
+        &alt_path
+    } else {
+        return Err(error(StatusCode::NOT_FOUND, &format!("Stack '{}' not found", name)));
+    };
     let content = tokio::fs::read_to_string(&file_path)
         .await
         .map_err(|_| error(StatusCode::NOT_FOUND, &format!("Stack '{}' not found", name)))?;
