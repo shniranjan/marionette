@@ -42,8 +42,8 @@ export default function ContainerDetail({ id, name, navigate }) {
   if (error) return <div className="text-danger">Error: {error}</div>;
   if (!inspect) return <div className="text-secondary">No data</div>;
 
-  const displayName = (name || inspect.Name || id || '').replace(/^\//, '');
-  const state = inspect.State?.Status || 'unknown';
+  const displayName = (name || inspect.name || id || '').replace(/^\//, '');
+  const state = inspect.state || 'unknown';
 
   return (
     <div>
@@ -66,8 +66,8 @@ export default function ContainerDetail({ id, name, navigate }) {
 
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '16px' }}>
         ID: <code>{id?.substring(0, 12)}</code> &nbsp;|&nbsp;
-        Image: <code>{inspect.Config?.Image}</code> &nbsp;|&nbsp;
-        Created: <code>{inspect.Created ? new Date(inspect.Created).toLocaleString() : '—'}</code>
+        Image: <code>{inspect.image}</code> &nbsp;|&nbsp;
+        Created: <code>{inspect.created ? new Date(inspect.created).toLocaleString() : '—'}</code>
       </div>
 
       {/* Tabs */}
@@ -99,8 +99,8 @@ export default function ContainerDetail({ id, name, navigate }) {
         {tab === 'env' && (
           <div className="card">
             <h2>Environment Variables</h2>
-            {inspect.Config?.Env && inspect.Config.Env.length > 0 ? (
-              inspect.Config.Env.map((env, i) => {
+            {inspect.env && inspect.env.length > 0 ? (
+              inspect.env.map((env, i) => {
                 const [label, ...rest] = env.split('=');
                 return (
                   <SecretMask key={i} label={label} value={rest.join('=')} />
@@ -118,7 +118,7 @@ export default function ContainerDetail({ id, name, navigate }) {
         {tab === 'mounts' && (
           <div className="card">
             <h2>Mounts</h2>
-            {inspect.Mounts && inspect.Mounts.length > 0 ? (
+            {inspect.mounts && inspect.mounts.length > 0 ? (
               <table>
                 <thead>
                   <tr>
@@ -126,12 +126,12 @@ export default function ContainerDetail({ id, name, navigate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {inspect.Mounts.map((m, i) => (
+                  {inspect.mounts.map((m, i) => (
                     <tr key={i}>
-                      <td>{m.Type}</td>
-                      <td className="mono">{m.Source}</td>
-                      <td className="mono">{m.Destination}</td>
-                      <td>{m.Mode || '—'}</td>
+                      <td>{m.type}</td>
+                      <td className="mono">{m.source}</td>
+                      <td className="mono">{m.destination}</td>
+                      <td>{m.mode || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -144,17 +144,15 @@ export default function ContainerDetail({ id, name, navigate }) {
         {tab === 'network' && (
           <div className="card">
             <h2>Network</h2>
-            {inspect.NetworkSettings?.Networks ? (
-              Object.entries(inspect.NetworkSettings.Networks).map(([name, net]) => (
-                <div key={name} className="card mb-16" style={{ background: 'var(--bg-tertiary)' }}>
-                  <h3>{name}</h3>
+            {inspect.networks && inspect.networks.length > 0 ? (
+              inspect.networks.map((net) => (
+                <div key={net.name} className="card mb-16" style={{ background: 'var(--bg-tertiary)' }}>
+                  <h3>{net.name}</h3>
                   <div style={{ fontSize: '0.85rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                     <span className="text-secondary">IP Address</span>
-                    <span className="mono">{net.IPAddress || '—'}</span>
+                    <span className="mono">{net.ipAddress || '—'}</span>
                     <span className="text-secondary">Gateway</span>
-                    <span className="mono">{net.Gateway || '—'}</span>
-                    <span className="text-secondary">MAC Address</span>
-                    <span className="mono">{net.MacAddress || '—'}</span>
+                    <span className="mono">{net.gateway || '—'}</span>
                   </div>
                 </div>
               ))

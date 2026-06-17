@@ -5,6 +5,7 @@ use std::collections::HashMap;
 // ── Docker Endpoint ──────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DockerEndpoint {
     pub id: String,
     pub name: String,
@@ -40,6 +41,7 @@ impl Serialize for EndpointStatus {
 // ── Container ────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerSummary {
     pub id: String,
     pub name: String,
@@ -53,6 +55,7 @@ pub struct ContainerSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PortMapping {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ip: Option<String>,
@@ -64,6 +67,7 @@ pub struct PortMapping {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerDetail {
     pub id: String,
     pub name: String,
@@ -83,6 +87,7 @@ pub struct ContainerDetail {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Mount {
     #[serde(rename = "type")]
     pub mount_type: String,
@@ -97,6 +102,7 @@ pub struct Mount {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerNetwork {
     pub name: String,
     pub ip_address: Option<String>,
@@ -106,6 +112,7 @@ pub struct ContainerNetwork {
 // ── Image ────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageSummary {
     pub id: String,
     pub repo_tags: Vec<String>,
@@ -114,6 +121,7 @@ pub struct ImageSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageDetail {
     pub id: String,
     pub repo_tags: Vec<String>,
@@ -125,6 +133,7 @@ pub struct ImageDetail {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImageLayer {
     pub id: String,
     pub size: i64,
@@ -132,6 +141,7 @@ pub struct ImageLayer {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImagePullRequest {
     pub image: String,
     #[serde(default)]
@@ -141,6 +151,7 @@ pub struct ImagePullRequest {
 // ── Volume ───────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VolumeSummary {
     pub name: String,
     pub driver: String,
@@ -153,6 +164,7 @@ pub struct VolumeSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VolumeDeepInspection {
     pub name: String,
     pub driver: String,
@@ -179,6 +191,7 @@ pub struct VolumeDeepInspection {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VolumeCreateRequest {
     pub name: String,
     #[serde(default)]
@@ -192,6 +205,7 @@ pub struct VolumeCreateRequest {
 // ── Network ──────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkSummary {
     pub id: String,
     pub name: String,
@@ -203,6 +217,7 @@ pub struct NetworkSummary {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkCreateRequest {
     pub name: String,
     #[serde(default)]
@@ -214,6 +229,7 @@ pub struct NetworkCreateRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkConnectRequest {
     pub container: String,
 }
@@ -221,6 +237,7 @@ pub struct NetworkConnectRequest {
 // ── Stack ────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackSummary {
     pub name: String,
     pub services: usize,
@@ -229,11 +246,13 @@ pub struct StackSummary {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackSaveRequest {
     pub content: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StackCreateRequest {
     pub name: String,
     pub content: String,
@@ -242,6 +261,7 @@ pub struct StackCreateRequest {
 // ── System ───────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     pub containers: i64,
     pub containers_running: i64,
@@ -261,6 +281,7 @@ pub struct SystemInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PruneRequest {
     #[serde(default)]
     pub resource: String, // containers, images, volumes, networks
@@ -269,6 +290,7 @@ pub struct PruneRequest {
 // ── Audit ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuditEntry {
     pub timestamp: String,
     pub action: String,
@@ -281,6 +303,7 @@ pub struct AuditEntry {
 // ── Migration ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MigrationPlan {
     pub migration_id: String,
     pub source_endpoint: String,
@@ -297,6 +320,7 @@ pub struct MigrationPlan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MigrationVolume {
     pub name: String,
     pub driver: String,
@@ -307,6 +331,7 @@ pub struct MigrationVolume {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DbConnection {
     pub var_name: String,
     pub value_masked: String,
@@ -319,6 +344,7 @@ pub struct DbConnection {
 // ── Common ───────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EndpointQuery {
     #[serde(default)]
     pub endpoint: Option<String>,

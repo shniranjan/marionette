@@ -35,12 +35,12 @@ export default function Dashboard({ navigate }) {
   if (error) return <div className="text-danger">Error: {error}</div>;
 
   const containerList = Array.isArray(containers) ? containers : (containers?.containers || []);
-  const running = containerList.filter((c) => c.State === 'running').length;
-  const paused = containerList.filter((c) => c.State === 'paused').length;
-  const stopped = containerList.filter((c) => c.State === 'exited' || c.State === 'stopped').length;
-  const images = system?.Images ?? system?.images ?? '—';
-  const volumes = system?.Volumes ?? system?.volumes ?? '—';
-  const networks = system?.Networks ?? system?.networks ?? '—';
+  const running = containerList.filter((c) => c.state === 'running').length;
+  const paused = containerList.filter((c) => c.state === 'paused').length;
+  const stopped = containerList.filter((c) => c.state === 'exited' || c.state === 'stopped').length;
+  const images = system?.images ?? '—';
+  const volumes = system?.volumes ?? '—';
+  const networks = system?.networks ?? '—';
 
   return (
     <div>
@@ -99,40 +99,40 @@ export default function Dashboard({ navigate }) {
         <div className="card mb-24">
           <h2>System Information</h2>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.85rem' }}>
-            {system.OSType && (
+            {system.os && (
               <>
                 <span className="text-secondary">OS</span>
-                <span className="mono">{system.OSType} {system.Architecture || ''}</span>
+                <span className="mono">{system.os} {system.architecture || ''}</span>
               </>
             )}
-            {system.DockerRootDir && (
+            {system.kernelVersion && (
               <>
-                <span className="text-secondary">Docker Root</span>
-                <span className="mono">{system.DockerRootDir}</span>
+                <span className="text-secondary">Kernel</span>
+                <span className="mono">{system.kernelVersion}</span>
               </>
             )}
-            {system.NCPU != null && (
+            {system.driver && (
+              <>
+                <span className="text-secondary">Storage Driver</span>
+                <span className="mono">{system.driver}</span>
+              </>
+            )}
+            {system.cpuCount != null && (
               <>
                 <span className="text-secondary">CPUs</span>
-                <span className="mono">{system.NCPU}</span>
+                <span className="mono">{system.cpuCount}</span>
               </>
             )}
-            {system.MemTotal != null && (
+            {system.memoryBytes != null && (
               <>
                 <span className="text-secondary">Total Memory</span>
-                <span className="mono">{formatBytes(system.MemTotal)}</span>
+                <span className="mono">{formatBytes(system.memoryBytes)}</span>
               </>
             )}
-            {system.Name && (
-              <>
-                <span className="text-secondary">Hostname</span>
-                <span className="mono">{system.Name}</span>
-              </>
-            )}
-            {system.ServerVersion && (
+            {system.dockerVersion && (
               <>
                 <span className="text-secondary">Docker Version</span>
-                <span className="mono">{system.ServerVersion}</span>
+                <span className="mono">{system.dockerVersion}</span>
               </>
             )}
           </div>

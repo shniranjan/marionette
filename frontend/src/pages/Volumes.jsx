@@ -17,7 +17,7 @@ export default function Volumes() {
   const load = useCallback(async () => {
     try {
       const data = await api.get('/api/volumes');
-      setVolumes(Array.isArray(data) ? data : (data?.Volumes || []));
+      setVolumes(Array.isArray(data) ? data : (data?.volumes || []));
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -32,7 +32,7 @@ export default function Volumes() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      await api.post('/api/volumes', { Name: newName.trim(), Driver: newDriver || 'local' });
+      await api.post('/api/volumes', { name: newName.trim(), driver: newDriver || 'local' });
       setShowCreate(false);
       setNewName('');
       load();
@@ -57,7 +57,7 @@ export default function Volumes() {
     if (!confirm('Remove all unused volumes?')) return;
     try {
       const result = await api.post('/api/volumes/prune');
-      alert(`Pruned volumes. Reclaimed: ${result?.SpaceReclaimed || 'unknown'}`);
+      alert(`Pruned volumes. Reclaimed: ${result?.spaceReclaimed || 'unknown'}`);
       load();
     } catch (err) {
       alert('Error: ' + err.message);
@@ -102,14 +102,14 @@ export default function Volumes() {
           </thead>
           <tbody>
             {volumes.map((v) => (
-              <tr key={v.Name}>
-                <td className="mono">{v.Name}</td>
-                <td>{v.Driver}</td>
-                <td className="mono" style={{ fontSize: '0.75rem' }}>{v.Mountpoint}</td>
+              <tr key={v.name}>
+                <td className="mono">{v.name}</td>
+                <td>{v.driver}</td>
+                <td className="mono" style={{ fontSize: '0.75rem' }}>{v.mountpoint}</td>
                 <td>
                   <div className="btn-group">
-                    <button className="btn-sm" onClick={() => handleInspect(v.Name)}>🔍 Inspect</button>
-                    <button className="btn-danger btn-sm" onClick={() => handleRemove(v.Name)}>🗑</button>
+                    <button className="btn-sm" onClick={() => handleInspect(v.name)}>🔍 Inspect</button>
+                    <button className="btn-danger btn-sm" onClick={() => handleRemove(v.name)}>🗑</button>
                   </div>
                 </td>
               </tr>

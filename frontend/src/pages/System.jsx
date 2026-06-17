@@ -80,15 +80,15 @@ export default function System() {
         <div className="card mb-16">
           <h2>Docker Info</h2>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.85rem' }}>
-            <InfoItem label="Containers" value={info.Containers} />
-            <InfoItem label="Running" value={info.ContainersRunning} />
-            <InfoItem label="Paused" value={info.ContainersPaused} />
-            <InfoItem label="Stopped" value={info.ContainersStopped} />
-            <InfoItem label="Images" value={info.Images} />
-            <InfoItem label="OS" value={`${info.OSType || ''} ${info.Architecture || ''}`} />
-            <InfoItem label="CPUs" value={info.NCPU} />
-            <InfoItem label="Memory" value={info.MemTotal ? formatBytes(info.MemTotal) : '—'} />
-            <InfoItem label="Docker Root" value={info.DockerRootDir} />
+            <InfoItem label="Containers" value={info.containers} />
+            <InfoItem label="Running" value={info.containersRunning} />
+            <InfoItem label="Paused" value={info.containersPaused} />
+            <InfoItem label="Stopped" value={info.containersStopped} />
+            <InfoItem label="Images" value={info.images} />
+            <InfoItem label="OS" value={`${info.os || ''} ${info.architecture || ''}`} />
+            <InfoItem label="CPUs" value={info.cpuCount} />
+            <InfoItem label="Memory" value={info.memoryBytes ? formatBytes(info.memoryBytes) : '—'} />
+            <InfoItem label="Storage Driver" value={info.driver} />
           </div>
         </div>
       )}
