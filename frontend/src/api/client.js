@@ -19,12 +19,19 @@ async function request(method, path, body) {
     headers['X-Marionette-Key'] = key;
   }
 
+  // Pass current endpoint to backend
+  const ep = new URLSearchParams(window.location.search).get('endpoint');
+  let url = path;
+  if (ep && ep !== 'local') {
+    url += (path.includes('?') ? '&' : '?') + 'endpoint=' + encodeURIComponent(ep);
+  }
+
   const opts = { method, headers };
   if (body && method !== 'GET') {
     opts.body = JSON.stringify(body);
   }
 
-  const res = await fetch(path, opts);
+  const res = await fetch(url, opts);
 
   if (res.status === 401) {
     clearKey();
@@ -69,6 +76,11 @@ export function wsUrl(path) {
   const key = getKey();
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
-  const endpoint = new URLSearchParams(window.location.search).get('endpoint') || 'local';
-  return `${proto}//${host}${path}?endpoint=${encodeURIComponent(endpoint)}&key=${encodeURIComponent(key || '')}`;
+  const params = new URLSearchParams();
+  // Only pass endpoint if it's a real ID (not the default "local" string)
+  const ep = new URLSearchParams(window.location.search).get('endpoint');
+  if (ep && ep !== 'local') params.set('endpoint', ep);
+  if (key) params.set('key', key);
+  const qs = params.toString();
+  return `${proto}//${host}${path}${qs ? '?' + qs : ''}`;
 }
