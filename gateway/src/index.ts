@@ -45,6 +45,7 @@ async function main() {
   await server.register(fastifyHttpProxy, {
     upstream: PROXY_UPSTREAM,
     prefix: PROXY_PREFIX,
+    rewritePrefix: '/',
     websocket: PROXY_WEBSOCKET,
     replyOptions: {
       rewriteRequestHeaders,
