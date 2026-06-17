@@ -35,7 +35,8 @@ impl ComposeRunner {
         }
     }
 
-    /// List all stacks by scanning the stacks directory for docker-compose files.
+    /// List all stacks by scanning the stacks directory for compose files.
+    /// Accepts both `docker-compose.yml` and `compose.yml`.
     pub fn list_stacks(&self) -> Vec<crate::models::StackSummary> {
         let mut stacks = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&self.stacks_dir) {
@@ -43,23 +44,30 @@ impl ComposeRunner {
                 let path = entry.path();
                 if path.is_dir() {
                     let compose_file = path.join("docker-compose.yml");
-                    if compose_file.exists() {
-                        let name = path.file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_default();
+                    let alt_file = path.join("compose.yml");
+                    let actual_file = if compose_file.exists() {
+                        &compose_file
+                    } else if alt_file.exists() {
+                        &alt_file
+                    } else {
+                        continue;
+                    };
 
-                        // Count services by parsing the yml (simple grep for 'image:')
-                        let services = std::fs::read_to_string(&compose_file)
-                            .map(|c| c.lines().filter(|l| l.trim().starts_with("image:")).count())
-                            .unwrap_or(0);
+                    let name = path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
 
-                        stacks.push(crate::models::StackSummary {
-                            name,
-                            services,
-                            status: "unknown".to_string(),
-                            file: compose_file.to_string_lossy().to_string(),
-                        });
-                    }
+                    // Count services by parsing the yml (simple grep for 'image:')
+                    let services = std::fs::read_to_string(actual_file)
+                        .map(|c| c.lines().filter(|l| l.trim().starts_with("image:")).count())
+                        .unwrap_or(0);
+
+                    stacks.push(crate::models::StackSummary {
+                        name,
+                        services,
+                        status: "unknown".to_string(),
+                        file: actual_file.to_string_lossy().to_string(),
+                    });
                 }
             }
         }
