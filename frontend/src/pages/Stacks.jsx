@@ -21,6 +21,11 @@ export default function Stacks() {
   const [stackName, setStackName] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // Edit state
+  const [showEdit, setShowEdit] = useState(null);
+  const [editYml, setEditYml] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const data = await api.get('/api/stacks');
@@ -48,6 +53,30 @@ export default function Stacks() {
       alert('Error: ' + err.message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleEdit = async (name) => {
+    try {
+      const data = await api.get(`/api/stacks/${name}`);
+      setEditYml(data.content || '');
+      setShowEdit(name);
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!showEdit) return;
+    setEditSaving(true);
+    try {
+      await api.put(`/api/stacks/${showEdit}`, { content: editYml });
+      setShowEdit(null);
+      load();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -103,6 +132,7 @@ export default function Stacks() {
                   </div>
                 </div>
                 <div className="btn-group">
+                  <button className="btn-sm" onClick={() => handleEdit(name)}>✏ Edit</button>
                   <button className="btn-success btn-sm" onClick={() => handleAction(name, 'deploy')}>▶ Deploy</button>
                   <button className="btn-warning btn-sm" onClick={() => handleAction(name, 'stop')}>⏹ Stop</button>
                   <button className="btn-sm" onClick={() => handleAction(name, 'down')}>⬇ Down</button>
@@ -143,6 +173,24 @@ export default function Stacks() {
             </label>
             <YamlEditor value={yml} onChange={setYml} />
           </div>
+        </Modal>
+      )}
+
+      {/* Edit Stack Modal */}
+      {showEdit && (
+        <Modal
+          title={`Edit: ${showEdit}`}
+          onClose={() => setShowEdit(null)}
+          footer={
+            <>
+              <button onClick={() => setShowEdit(null)}>Cancel</button>
+              <button className="btn-primary" onClick={handleSave} disabled={editSaving}>
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </>
+          }
+        >
+          <YamlEditor value={editYml} onChange={setEditYml} />
         </Modal>
       )}
     </div>
