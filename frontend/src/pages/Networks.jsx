@@ -32,7 +32,7 @@ export default function Networks() {
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      await api.post('/api/networks', { Name: newName.trim(), Driver: newDriver || 'bridge' });
+      await api.post('/api/networks', { name: newName.trim(), driver: newDriver || 'bridge' });
       setShowCreate(false);
       setNewName('');
       load();
@@ -66,7 +66,7 @@ export default function Networks() {
   const handleConnect = async () => {
     if (!showConnect || !connectContainer.trim()) return;
     try {
-      await api.post(`/api/networks/${showConnect.Id}/connect`, { Container: connectContainer.trim() });
+      await api.post(`/api/networks/${showConnect.id}/connect`, { container: connectContainer.trim() });
       setShowConnect(null);
       setConnectContainer('');
       load();
@@ -78,7 +78,7 @@ export default function Networks() {
   const handleDisconnect = async (networkId, containerId) => {
     if (!confirm('Disconnect this container?')) return;
     try {
-      await api.post(`/api/networks/${networkId}/disconnect`, { Container: containerId });
+      await api.post(`/api/networks/${networkId}/disconnect`, { container: containerId });
       load();
     } catch (err) {
       alert('Error: ' + err.message);
@@ -105,33 +105,33 @@ export default function Networks() {
       ) : (
         <div style={{ display: 'grid', gap: '12px' }}>
           {networks.map((net) => (
-            <div key={net.Id} className="card">
+            <div key={net.id} className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <div style={{ fontWeight: 600 }}>{net.Name}</div>
+                  <div style={{ fontWeight: 600 }}>{net.name}</div>
                   <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
-                    ID: {net.Id?.substring(0, 12)} &nbsp;|&nbsp;
-                    Driver: {net.Driver} &nbsp;|&nbsp;
-                    Scope: {net.Scope}
-                    {net.IPAM?.Config?.length > 0 && (
-                      <span> &nbsp;|&nbsp; Subnet: {net.IPAM.Config[0].Subnet}</span>
+                    ID: {net.id?.substring(0, 12)} &nbsp;|&nbsp;
+                    Driver: {net.driver} &nbsp;|&nbsp;
+                    Scope: {net.scope}
+                    {net.ipam?.config?.length > 0 && (
+                      <span> &nbsp;|&nbsp; Subnet: {net.ipam.config[0].subnet}</span>
                     )}
                   </div>
-                  {net.Containers && Object.keys(net.Containers).length > 0 && (
+                  {net.containers && Object.keys(net.containers).length > 0 && (
                     <div style={{ marginTop: '8px' }}>
                       <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '4px' }}>
-                        Containers ({Object.keys(net.Containers).length}):
+                        Containers ({Object.keys(net.containers).length}):
                       </div>
-                      {Object.entries(net.Containers).map(([cid, info]) => (
+                      {Object.entries(net.containers).map(([cid, info]) => (
                         <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                          <span className="mono" style={{ fontSize: '0.75rem' }}>{info.Name}</span>
+                          <span className="mono" style={{ fontSize: '0.75rem' }}>{info.name}</span>
                           <span className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                            ({info.IPv4Address})
+                            ({info.ipv4Address})
                           </span>
                           <button
                             className="btn-sm"
                             style={{ fontSize: '0.65rem', padding: '1px 6px' }}
-                            onClick={() => handleDisconnect(net.Id, cid)}
+                            onClick={() => handleDisconnect(net.id, cid)}
                           >
                             Disconnect
                           </button>
@@ -142,7 +142,7 @@ export default function Networks() {
                 </div>
                 <div className="btn-group">
                   <button className="btn-sm" onClick={() => setShowConnect(net)}>🔗 Connect</button>
-                  <button className="btn-danger btn-sm" onClick={() => handleRemove(net.Id)}>🗑</button>
+                  <button className="btn-danger btn-sm" onClick={() => handleRemove(net.id)}>🗑</button>
                 </div>
               </div>
             </div>
@@ -188,7 +188,7 @@ export default function Networks() {
       {/* Connect Modal */}
       {showConnect && (
         <Modal
-          title={`Connect to ${showConnect.Name}`}
+          title={`Connect to ${showConnect.name}`}
           onClose={() => { setShowConnect(null); setConnectContainer(''); }}
           footer={
             <>

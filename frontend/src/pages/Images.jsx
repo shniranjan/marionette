@@ -82,25 +82,25 @@ export default function Images() {
       ) : (
         <div style={{ display: 'grid', gap: '12px' }}>
           {images.map((img) => {
-            const tags = img.RepoTags || [];
+            const tags = img.repoTags || [];
             return (
-              <div key={img.Id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div key={img.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div className="mono" style={{ fontWeight: 600 }}>
-                    {tags.length > 0 ? tags[0].replace(/^<none>:<none>$/, '<none>') : img.Id?.substring(0, 12)}
+                    {tags.length > 0 ? tags[0].replace(/^<none>:<none>$/, '<none>') : img.id?.substring(0, 12)}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    ID: {img.Id?.substring(0, 12)} &nbsp;|&nbsp;
-                    Size: {formatSize(img.Size)} &nbsp;|&nbsp;
-                    Created: {img.Created ? new Date(img.Created * 1000).toLocaleDateString() : '—'}
+                    ID: {img.id?.substring(0, 12)} &nbsp;|&nbsp;
+                    Size: {formatSize(img.size)} &nbsp;|&nbsp;
+                    Created: {img.created ? new Date(img.created * 1000).toLocaleDateString() : '—'}
                     {tags.length > 1 && (
                       <span> &nbsp;|&nbsp; Tags: {tags.join(', ')}</span>
                     )}
                   </div>
                 </div>
                 <div className="btn-group">
-                  <button className="btn-sm" onClick={() => handleInspect(img.Id)}>🔍 Inspect</button>
-                  <button className="btn-danger btn-sm" onClick={() => handleRemove(img.Id)}>🗑 Remove</button>
+                  <button className="btn-sm" onClick={() => handleInspect(img.id)}>🔍 Inspect</button>
+                  <button className="btn-danger btn-sm" onClick={() => handleRemove(img.id)}>🗑 Remove</button>
                 </div>
               </div>
             );

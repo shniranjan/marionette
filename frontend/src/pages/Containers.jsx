@@ -29,25 +29,25 @@ export default function Containers({ navigate }) {
   }, [load]);
 
   const columns = [
-    { key: 'Name', label: 'Name', render: (v, row) => (
+    { key: 'name', label: 'Name', render: (v, row) => (
       <span style={{ fontWeight: 500, cursor: 'pointer', color: 'var(--accent)' }}
-        onClick={(e) => { e.stopPropagation(); navigate('containerDetail', { id: row.Id, name: row.Name }); }}>
+        onClick={(e) => { e.stopPropagation(); navigate('containerDetail', { id: row.id, name: row.name }); }}>
         {(v || '').replace(/^\//, '')}
       </span>
     )},
-    { key: 'Image', label: 'Image' },
-    { key: 'State', label: 'State', render: (v) => <StatusBadge state={v} /> },
-    { key: 'Status', label: 'Status' },
-    { key: 'Ports', label: 'Ports', render: (v) => {
+    { key: 'image', label: 'Image' },
+    { key: 'state', label: 'State', render: (v) => <StatusBadge state={v} /> },
+    { key: 'status', label: 'Status' },
+    { key: 'ports', label: 'Ports', render: (v) => {
       if (!v || !Array.isArray(v) || v.length === 0) return <span className="text-secondary">—</span>;
       return v.map((p, i) => (
         <span key={i} className="mono" style={{ fontSize: '0.7rem', marginRight: '6px' }}>
-          {p.PublicPort ? `${p.PublicPort}:${p.PrivatePort}` : p.PrivatePort}
+          {p.publicPort ? `${p.publicPort}:${p.privatePort}` : p.privatePort}
         </span>
       ));
     }},
     { key: 'actions', label: 'Actions', sortable: false, render: (_, row) => (
-      <ActionBar containerId={row.Id} state={row.State} onAction={onAction} />
+      <ActionBar containerId={row.id} state={row.state} onAction={onAction} />
     )},
   ];
 
@@ -63,7 +63,7 @@ export default function Containers({ navigate }) {
       <ContainerTable
         columns={columns}
         data={containers}
-        onRowClick={(row) => navigate('containerDetail', { id: row.Id, name: row.Name })}
+        onRowClick={(row) => navigate('containerDetail', { id: row.id, name: row.name })}
       />
     </div>
   );
