@@ -1,6 +1,7 @@
 services:
   marionette:
-    image: ghcr.io/shniranjan/marionette:latest
+    build: .
+    image: marionette:local
     container_name: marionette
     ports:
       - "8000:8000"
