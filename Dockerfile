@@ -60,6 +60,9 @@ RUN mkdir -p /data /stacks /etc/nginx/upstreams /run/nginx
 # Configure nginx to include marionette upstreams
 RUN echo 'include /etc/nginx/upstreams/*.conf;' >> /etc/nginx/http.d/default.conf
 
+# Placeholder so nginx -t passes when no upstreams exist yet
+RUN echo '# marionette placeholder' > /etc/nginx/upstreams/placeholder.conf
+
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
     CMD curl -sf http://localhost:9119/health || exit 1
