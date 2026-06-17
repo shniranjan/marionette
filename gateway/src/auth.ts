@@ -52,6 +52,9 @@ export function createAuthHook() {
   ) {
     if (isDevMode(keys)) return;
 
+    // Skip auth for WebSocket upgrade requests (browsers can't set custom headers)
+    if (request.headers['upgrade']?.toLowerCase() === 'websocket') return;
+
     const headerValue = request.headers['x-marionette-key'];
     if (!validateKey(headerValue, keys)) {
       reply.status(401).send({ error: 'Unauthorized', message: 'Invalid or missing X-Marionette-Key header' });
