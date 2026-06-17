@@ -2,41 +2,20 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Build](https://github.com/shniranjan/marionette/actions/workflows/ci.yml/badge.svg)](https://github.com/shniranjan/marionette/actions/workflows/ci.yml)
-[![Docker Pulls](https://img.shields.io/docker/pulls/shniranjan/marionette)](https://github.com/shniranjan/marionette/pkgs/container/marionette)
 
 A centralized Docker infrastructure management platform. Manage containers, images, volumes, networks, stacks, and Swarm clusters across multiple hosts — from a single, minimal web UI. Includes the only guided container migration wizard in any Docker management tool.
-
----
-
-## Why Marionette?
-
-| You need | Marionette gives you |
-|----------|---------------|
-| Manage Docker across multiple hosts | Single dashboard, host switcher, no SSH required per host |
-| Move containers between servers | **Guided 9-step migration wizard** — the only Docker UI that does this |
-| Deploy and manage compose stacks | Built-in YML editor with syntax highlighting and one-click deploy |
-| Orchestrate with Docker Swarm | Full Swarm management — nodes, services, tasks, secrets |
-| Load balance across hosts | Label-driven Nginx upstream management, zero-downtime reload |
-| A UI that doesn't get in your way | Dark/light/sepia themes, dense layout, keyboard shortcuts |
 
 ---
 
 ## Quick Start
 
 ```bash
-# Pull the image
-docker pull ghcr.io/shniranjan/marionette:latest
-
-# Run (local Docker host only)
-docker run -d --name marionette \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /opt/stacks:/stacks \
-  -e MARIONETTE_KEY=your-secret-key \
-  -p 8000:8000 \
-  ghcr.io/shniranjan/marionette:latest
+# Clone and build (recommended)
+git clone https://github.com/shniranjan/marionette.git
+cd marionette
+docker compose up -d --build
 
 # Open http://localhost:8000
-# Enter your MARIONETTE_KEY when prompted
 ```
 
 Or with docker-compose:
@@ -44,51 +23,41 @@ Or with docker-compose:
 ```yaml
 services:
   marionette:
-    image: ghcr.io/shniranjan/marionette:latest
+    build: .
+    image: marionette:local
     container_name: marionette
     ports:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./stacks:/stacks
+      - ./data:/data
     environment:
-      - MARIONETTE_KEY=${MARIONETTE_KEY:-change-me}
+      - MARIONETTE_KEY=${MARIONETTE_KEY:-}
     restart: unless-stopped
 ```
 
-For multi-host setup, see [Quickstart Guide](docs/quickstart.md).
+For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 
 ---
 
 ## Features
 
-### Phase 1 — Available Now
-
 | Module | Capabilities |
 |--------|-------------|
-| **Dashboard** | Container counts, resource usage, recent events, system info |
-| **Containers** | List, inspect, start, stop, restart, kill, pause, unpause, remove, rename. Live logs and stats streaming. 6-tab detail view. |
+| **Dashboard** | Container counts, resource usage, system info, quick actions |
+| **Containers** | List, inspect, start/stop/restart/kill/pause/rename/remove. Live logs and stats streaming via WebSocket. 6-tab detail view (info, logs, stats, env, mounts, network). |
 | **Images** | List, pull (with progress), inspect, remove, layer history |
-| **Volumes** | List, create, remove, prune, deep inspection (driver, size, usage) |
+| **Volumes** | List, create, remove, prune, deep inspection (driver, size, usage, file count) |
 | **Networks** | List, create, remove, connect/disconnect containers, prune |
-| **Stacks** | List docker-compose stacks, edit YML (CodeMirror), save, deploy, stop, down, restart |
-| **System** | Docker info, version, events stream, prune all resource types |
-| **Auth** | Access key (`X-Marionette-Key` header). Rate limiting. Multiple key support. |
+| **Stacks** | List compose stacks, edit YAML (CodeMirror), save, deploy, stop, down. Detects running/stopped status. Supports both `docker-compose.yml` and `compose.yml`. |
+| **Endpoints** | Connect multiple Docker hosts. Host switcher in sidebar. Connection testing. |
+| **Swarm** | Nodes, services, tasks, secrets, configs. Init/join/leave. Scale and update services. Visualizer. |
+| **Nginx LB** | Label-driven upstream config generation (`marionette.lb.*`). Regenerate, test, and reload nginx config from the UI. |
+| **Migration** | 9-step guided wizard. Cold migration with volume sync. Database connection review. Dry run. Command-only (no SSH keys stored). |
+| **System** | Docker info, version, events stream (SSE), prune all resource types, audit log |
+| **Auth** | Access key (`X-Marionette-Key` header). Multiple key support. Dev mode (no key required). |
 | **Themes** | Dark, Light, Sepia — persists across sessions |
-
-### Phase 2 — Coming Soon
-
-- **Multi-Host:** Connect remote Docker hosts via Socket Proxy. Host switcher in UI.
-- **Container Migration:** 9-step guided wizard. Cold migration with volume sync. Database connection review. Dry run. Rollback.
-- **Event-Driven Updates:** SSE-based real-time refresh — zero polling.
-
-### Phase 3 — Planned
-
-- **Docker Swarm:** Nodes, services, tasks, secrets, configs. Init/join/leave. Visualizer.
-
-### Phase 4 — Planned
-
-- **Nginx Load Balancer:** Label-driven upstream config generation. Zero-downtime reload. Health check integration.
 
 ---
 
@@ -96,7 +65,7 @@ For multi-host setup, see [Quickstart Guide](docs/quickstart.md).
 
 ```
 ┌──────────────────────────────────────────────┐
-│                  marionette (single container)       │
+│              marionette (single container)    │
 │                                               │
 │  ┌───────────┐  ┌──────────┐  ┌───────────┐  │
 │  │ React SPA │  │ Fastify  │  │ Rust Core │  │
@@ -104,6 +73,10 @@ For multi-host setup, see [Quickstart Guide](docs/quickstart.md).
 │  │           │  │ :8000    │  │ :9119     │  │
 │  └───────────┘  └──────────┘  └─────┬─────┘  │
 │                                      │        │
+│  ┌──────────┐                        │        │
+│  │  Nginx   │                        │        │
+│  │  :80/443 │                        │        │
+│  └──────────┘                        │        │
 └──────────────────────────────────────┼────────┘
                                        │
                               /var/run/docker.sock
@@ -111,7 +84,7 @@ For multi-host setup, see [Quickstart Guide](docs/quickstart.md).
                                 Docker Daemon
 ```
 
-**Tech Stack:** Rust (Axum + bollard) | Node 22 + TypeScript (Fastify) | React 19 + Vite | CodeMirror 6 | supervisord
+**Tech Stack:** Rust (Axum + bollard) | Node 22 + TypeScript (Fastify) | React 19 + Vite | CodeMirror 6 | Nginx | supervisord
 
 For full architecture details, see [Architecture](docs/architecture.md).
 
@@ -139,13 +112,15 @@ For full architecture details, see [Architecture](docs/architecture.md).
 |---------|:--------:|---------|-------------|
 | `MARIONETTE_KEY` | Production | — | Access key for web UI. Empty = no auth (dev only). Multiple keys: `key1,key2` |
 | `MARIONETTE_STACKS_DIR` | No | `/stacks` | Directory for docker-compose stack files |
+| `MARIONETTE_DB_PATH` | No | `/data/marionette.db` | SQLite database path for audit log |
+| `MARIONETTE_NGINX_DIR` | No | `/etc/nginx/upstreams` | Output directory for generated nginx upstream configs |
 | `MARIONETTE_LOG_LEVEL` | No | `info` | Log level: trace, debug, info, warn, error |
 
 ---
 
 ## Security
 
-- **Access Key:** All `/api/*` requests require `X-Marionette-Key` header when `MARIONETTE_KEY` is set
+- **Access Key:** All `/api/*` requests require `X-Marionette-Key` header when `MARIONETTE_KEY` is set. WebSocket connections are exempt (browsers cannot set custom headers on WebSocket).
 - **Credential Masking:** Environment variables and volume driver options are masked by default in the UI
 - **Socket Proxy:** Remote hosts use `tecnativa/docker-socket-proxy` with granular API permissions
 - **Audit Log:** All mutating actions are logged with timestamp, admin key hash, and target
