@@ -2,7 +2,9 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyHttpProxy from '@fastify/http-proxy';
 import fastifyStatic from '@fastify/static';
-import { resolve, join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import https from 'https';
+import { resolve } from 'path';
 
 import { createAuthHook } from './auth';
 import {
@@ -14,14 +16,26 @@ import {
 
 const PORT = parseInt(process.env.PORT || '8000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
+const TLS_KEY = process.env.TLS_KEY || '';
+const TLS_CERT = process.env.TLS_CERT || '';
+const TLS_ENABLED = !!(TLS_KEY && TLS_CERT && existsSync(TLS_KEY) && existsSync(TLS_CERT));
+
+function createServer() {
+  const opts: any = { logger: true };
+  if (TLS_ENABLED) {
+    const key = readFileSync(TLS_KEY);
+    const cert = readFileSync(TLS_CERT);
+    opts.serverFactory = (handler: any) =>
+      https.createServer({ key, cert }, handler);
+  }
+  return Fastify(opts);
+}
 
 async function main() {
-  const server = Fastify({
-    logger: true,
-  });
+  const server = createServer();
 
   // --- CORS (allow all origins) ---
-  await server.register(cors, {
+  (server as any).register(cors, {
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Marionette-Key'],
@@ -30,7 +44,7 @@ async function main() {
 
   // --- Auth middleware for /api/* routes ---
   const authHook = createAuthHook();
-  server.addHook('onRoute', (routeOptions) => {
+  (server as any).addHook('onRoute', (routeOptions: any) => {
     if (routeOptions.url && routeOptions.url.startsWith(PROXY_PREFIX)) {
       if (!routeOptions.preHandler) {
         routeOptions.preHandler = [];
@@ -42,7 +56,7 @@ async function main() {
   });
 
   // --- Proxy /api/* to Rust core ---
-  await server.register(fastifyHttpProxy, {
+  (server as any).register(fastifyHttpProxy, {
     upstream: PROXY_UPSTREAM,
     prefix: PROXY_PREFIX,
     rewritePrefix: '/',
@@ -56,31 +70,33 @@ async function main() {
   // --- Serve SPA static files ---
   const staticRoot = resolve(__dirname, '..', '..', 'frontend', 'dist');
 
-  await server.register(fastifyStatic, {
+  (server as any).register(fastifyStatic, {
     root: staticRoot,
     prefix: '/',
     wildcard: false,
   });
 
   // SPA fallback: any non-/api GET that isn't a static file → index.html
-  server.setNotFoundHandler((request, reply) => {
+  (server as any).setNotFoundHandler((request: any, reply: any) => {
     if (request.url.startsWith(PROXY_PREFIX)) {
-      // API routes should have been handled by the proxy; if we reach here,
-      // the upstream returned 404, so pass it through.
       reply.status(404).send({ error: 'Not Found' });
       return;
     }
-
-    // For non-API routes, serve the SPA index.html
     reply.sendFile('index.html');
   });
 
   // --- Start ---
   try {
     await server.listen({ port: PORT, host: HOST });
-    server.log.info(`Gateway listening on ${HOST}:${PORT}`);
+    const protocol = TLS_ENABLED ? 'https' : 'http';
+    server.log.info(`Gateway listening on ${protocol}://${HOST}:${PORT}`);
     server.log.info(`Proxying ${PROXY_PREFIX}/* → ${PROXY_UPSTREAM}`);
     server.log.info(`Serving static files from ${staticRoot}`);
+    if (!TLS_ENABLED) {
+      server.log.warn('TLS not configured — serving HTTP only.');
+      server.log.warn('Generate a self-signed cert: scripts/generate-cert.sh');
+      server.log.warn('Then set TLS_KEY and TLS_CERT environment variables.');
+    }
   } catch (err) {
     server.log.error(err);
     process.exit(1);

@@ -10,12 +10,18 @@ A centralized Docker infrastructure management platform. Manage containers, imag
 ## Quick Start
 
 ```bash
-# Clone and build (recommended)
+# Clone and build
 git clone https://github.com/shniranjan/marionette.git
 cd marionette
+
+# (Optional) Generate self-signed TLS certificate for HTTPS
+./scripts/generate-cert.sh
+
+# Uncomment the TLS lines in docker-compose.yml, then:
 docker compose up -d --build
 
-# Open http://localhost:8000
+# HTTP:  http://localhost:8000
+# HTTPS: https://localhost:8000 (if TLS enabled)
 ```
 
 Or with docker-compose:
@@ -32,8 +38,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./stacks:/stacks
       - ./data:/data
+      # - ./certs:/app/certs:ro          # uncomment for HTTPS
     environment:
       - MARIONETTE_KEY=${MARIONETTE_KEY:-}
+      # - TLS_KEY=/app/certs/marionette-key.pem    # uncomment for HTTPS
+      # - TLS_CERT=/app/certs/marionette-cert.pem  # uncomment for HTTPS
     restart: unless-stopped
 ```
 

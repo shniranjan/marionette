@@ -1,10 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { wsUrl } from '../api/client';
+import {
+  AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
+
+const MAX_POINTS = 60;
 
 export default function StatsPanel({ containerId }) {
-  const [stats, setStats] = useState(null);
+  const [history, setHistory] = useState([]);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef(null);
+  const prevNetRef = useRef(null); // for rate calculation
 
   useEffect(() => {
     if (!containerId) return;
@@ -19,8 +26,59 @@ export default function StatsPanel({ containerId }) {
 
     ws.onmessage = (e) => {
       try {
-        const data = JSON.parse(e.data);
-        setStats(data);
+        const stats = JSON.parse(e.data);
+        const now = Date.now();
+
+        // CPU
+        const cpuPercent = calculateCPU(stats.cpu_stats, stats.precpu_stats);
+
+        // Memory
+        const memUsage = stats.memory_stats?.usage || 0;
+        const memLimit = stats.memory_stats?.limit || 1;
+        const memPercent = memLimit > 0 ? (memUsage / memLimit) * 100 : 0;
+
+        // Network rate (bytes/sec)
+        let netRxRate = 0;
+        let netTxRate = 0;
+        const networks = stats.networks;
+        if (networks) {
+          const netTotal = Object.values(networks).reduce(
+            (acc, n) => ({ rx: (acc.rx || 0) + (n.rx_bytes || 0), tx: (acc.tx || 0) + (n.tx_bytes || 0) }),
+            { rx: 0, tx: 0 }
+          );
+          if (prevNetRef.current) {
+            const elapsed = (now - prevNetRef.current.time) / 1000;
+            if (elapsed > 0) {
+              netRxRate = (netTotal.rx - prevNetRef.current.rx) / elapsed;
+              netTxRate = (netTotal.tx - prevNetRef.current.tx) / elapsed;
+            }
+          }
+          prevNetRef.current = { ...netTotal, time: now };
+        }
+
+        // Block I/O cumulative
+        const blkRead = stats.blkio_stats?.io_service_bytes_recursive
+          ?.filter(io => io.op === 'read')
+          ?.reduce((s, io) => s + (io.value || 0), 0) || 0;
+        const blkWrite = stats.blkio_stats?.io_service_bytes_recursive
+          ?.filter(io => io.op === 'write')
+          ?.reduce((s, io) => s + (io.value || 0), 0) || 0;
+
+        const point = {
+          time: now,
+          cpu: Number(cpuPercent.toFixed(1)),
+          memPct: Number(memPercent.toFixed(1)),
+          memAbs: memUsage,
+          netRx: Number(netRxRate.toFixed(0)),
+          netTx: Number(netTxRate.toFixed(0)),
+          blkRead,
+          blkWrite,
+        };
+
+        setHistory(prev => {
+          const next = [...prev, point];
+          return next.length > MAX_POINTS ? next.slice(next.length - MAX_POINTS) : next;
+        });
       } catch {
         // ignore parse errors
       }
@@ -31,121 +89,112 @@ export default function StatsPanel({ containerId }) {
     };
   }, [containerId]);
 
-  if (!connected && !stats) {
-    return <div className="text-secondary loading-center">Connecting to stats stream...</div>;
+  const latest = history.length > 0 ? history[history.length - 1] : null;
+
+  if (!connected && history.length === 0) {
+    return <div style={{ color: 'var(--pico-muted-color)', textAlign: 'center', padding: '48px' }}>
+      Connecting to stats stream...
+    </div>;
   }
 
-  const cpuPercent = stats?.cpu_stats
-    ? calculateCPU(stats.cpu_stats, stats.precpu_stats)
-    : 0;
-  const memUsage = stats?.memory_stats?.usage || 0;
-  const memLimit = stats?.memory_stats?.limit || 1;
-  const memPercent = memLimit > 0 ? (memUsage / memLimit) * 100 : 0;
-  const netIO = stats?.networks
-    ? Object.values(stats.networks).reduce(
-        (acc, n) => ({ rx: (acc.rx || 0) + (n.rx_bytes || 0), tx: (acc.tx || 0) + (n.tx_bytes || 0) }),
-        { rx: 0, tx: 0 }
-      )
-    : { rx: 0, tx: 0 };
-  const blkIO = stats?.blkio_stats?.io_service_bytes_recursive || [];
+  const formatTime = (ts) => {
+    const d = new Date(ts);
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
+  };
+
+  const chartTheme = {
+    grid: 'var(--card-border)',
+    text: 'var(--pico-muted-color, #8b949e)',
+    cpu: 'var(--accent, #58a6ff)',
+    mem: 'var(--green, #3fb950)',
+    rx: 'var(--accent, #58a6ff)',
+    tx: 'var(--green, #3fb950)',
+  };
 
   return (
     <div>
+      {/* Connection indicator */}
       <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        marginBottom: '16px',
-        padding: '4px 0',
+        display: 'flex', alignItems: 'center', gap: '8px',
+        marginBottom: '16px', padding: '4px 0',
       }}>
         <div style={{
           width: '8px', height: '8px', borderRadius: '50%',
           background: connected ? 'var(--green)' : 'var(--red)',
         }} />
-        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+        <span style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)' }}>
           {connected ? 'Live' : 'Disconnected'}
         </span>
-      </div>
-
-      {/* CPU */}
-      <div className="card mb-16">
-        <h3>CPU</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            flex: 1,
-            height: '24px',
-            background: 'var(--bg-tertiary)',
-            borderRadius: '12px',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              width: `${Math.min(cpuPercent, 100)}%`,
-              height: '100%',
-              background: cpuPercent > 80 ? 'var(--red)' : cpuPercent > 50 ? 'var(--yellow)' : 'var(--green)',
-              borderRadius: '12px',
-              transition: 'width 0.5s ease',
-            }} />
-          </div>
-          <span className="mono" style={{ fontWeight: 600, minWidth: '60px', textAlign: 'right' }}>
-            {cpuPercent.toFixed(1)}%
+        {latest && (
+          <span style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)', marginLeft: 'auto' }}>
+            CPU: {latest.cpu}% &nbsp; Mem: {latest.memPct}%
           </span>
-        </div>
+        )}
       </div>
 
-      {/* Memory */}
-      <div className="card mb-16">
-        <h3>Memory</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            flex: 1,
-            height: '24px',
-            background: 'var(--bg-tertiary)',
-            borderRadius: '12px',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              width: `${Math.min(memPercent, 100)}%`,
-              height: '100%',
-              background: memPercent > 80 ? 'var(--red)' : memPercent > 50 ? 'var(--yellow)' : 'var(--green)',
-              borderRadius: '12px',
-              transition: 'width 0.5s ease',
-            }} />
-          </div>
-          <span className="mono" style={{ fontWeight: 600, minWidth: '60px', textAlign: 'right' }}>
-            {memPercent.toFixed(1)}%
-          </span>
-        </div>
-        <div className="text-secondary mono" style={{ fontSize: '0.75rem', marginTop: '8px' }}>
-          {formatBytes(memUsage)} / {formatBytes(memLimit)}
-        </div>
-      </div>
-
-      {/* Network I/O */}
-      <div className="card mb-16">
-        <h3>Network I/O</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-          <div>
-            <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '4px' }}>RX</div>
-            <div className="mono" style={{ color: 'var(--accent)' }}>{formatBytes(netIO.rx)}</div>
-          </div>
-          <div>
-            <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '4px' }}>TX</div>
-            <div className="mono" style={{ color: 'var(--green)' }}>{formatBytes(netIO.tx)}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Block I/O */}
-      {blkIO.length > 0 && (
+      {/* Charts grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+        {/* CPU Chart */}
         <div className="card">
-          <h3>Block I/O</h3>
-          {blkIO.map((io, i) => (
-            <div key={i} className="mono" style={{ fontSize: '0.75rem', marginBottom: '4px' }}>
-              {io.op}: {formatBytes(io.value)}
-            </div>
-          ))}
+          <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>CPU %</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={history} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
+              <defs>
+                <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={chartTheme.cpu} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={chartTheme.cpu} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+              <XAxis dataKey="time" tickFormatter={formatTime} fontSize={10} stroke={chartTheme.text} interval="preserveStartEnd" />
+              <YAxis fontSize={10} stroke={chartTheme.text} domain={[0, 'auto']} tickFormatter={v => `${v}%`} />
+              <Tooltip labelFormatter={formatTime} formatter={(v) => [`${v}%`, 'CPU']} />
+              <Area type="monotone" dataKey="cpu" stroke={chartTheme.cpu} fill="url(#cpuGrad)" strokeWidth={2} isAnimationActive={false} dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
-      )}
+
+        {/* Memory Chart */}
+        <div className="card">
+          <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>Memory</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={history} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
+              <defs>
+                <linearGradient id="memGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={chartTheme.mem} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={chartTheme.mem} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+              <XAxis dataKey="time" tickFormatter={formatTime} fontSize={10} stroke={chartTheme.text} interval="preserveStartEnd" />
+              <YAxis fontSize={10} stroke={chartTheme.text} domain={[0, 100]} tickFormatter={v => `${v}%`} />
+              <Tooltip labelFormatter={formatTime} formatter={(v) => [`${v}%`, 'Memory']} />
+              <Area type="monotone" dataKey="memPct" stroke={chartTheme.mem} fill="url(#memGrad)" strokeWidth={2} isAnimationActive={false} dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+          {latest && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)', marginTop: '4px' }}>
+              {formatBytes(latest.memAbs)} / {formatBytes(latest.memAbs / (latest.memPct / 100) || 0)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Network Chart — full width */}
+      <div className="card">
+        <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>Network I/O</h3>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={history} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
+            <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+            <XAxis dataKey="time" tickFormatter={formatTime} fontSize={10} stroke={chartTheme.text} interval="preserveStartEnd" />
+            <YAxis fontSize={10} stroke={chartTheme.text} tickFormatter={formatBytes} />
+            <Tooltip labelFormatter={formatTime} formatter={(v, name) => [formatBytes(v), name === 'netRx' ? 'RX' : 'TX']} />
+            <Legend formatter={(v) => v === 'netRx' ? 'RX' : 'TX'} />
+            <Line type="monotone" dataKey="netRx" stroke={chartTheme.rx} strokeWidth={2} isAnimationActive={false} dot={false} />
+            <Line type="monotone" dataKey="netTx" stroke={chartTheme.tx} strokeWidth={2} isAnimationActive={false} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
@@ -160,9 +209,10 @@ function calculateCPU(cpu, precpu) {
 }
 
 function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || bytes === 0) return '0 B/s';
+  if (bytes < 0) bytes = 0;
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  const i = Math.floor(Math.log(Math.max(bytes, 1)) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, Math.min(i, sizes.length - 1))).toFixed(1)) + ' ' + sizes[Math.min(i, sizes.length - 1)];
 }

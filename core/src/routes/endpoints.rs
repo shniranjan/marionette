@@ -89,6 +89,9 @@ pub async fn create_endpoint(
         endpoints.insert(id.clone(), endpoint.clone());
     }
 
+    // Persist to database
+    state.db.upsert_endpoint(&endpoint);
+
     // Audit
     state
         .audit_log
@@ -200,6 +203,14 @@ pub async fn update_endpoint(
         }
     }
 
+    // Persist updated endpoint to database
+    {
+        let endpoints = state.endpoints.read().await;
+        if let Some(ep) = endpoints.get(&id) {
+            state.db.upsert_endpoint(ep);
+        }
+    }
+
     // Audit
     let detail = detail_parts.join("; ");
     let target = {
@@ -248,6 +259,9 @@ pub async fn delete_endpoint(
         removed_name = removed.name;
         clients.remove(&id);
     }
+
+    // Delete from database
+    state.db.delete_endpoint(&id);
 
     // Audit
     state
@@ -332,6 +346,14 @@ pub async fn reconnect_endpoint(
         clients.insert(id.clone(), docker);
         if let Some(ep) = endpoints.get_mut(&id) {
             ep.status = EndpointStatus::Connected;
+        }
+    }
+
+    // Persist status to database
+    {
+        let endpoints = state.endpoints.read().await;
+        if let Some(ep) = endpoints.get(&id) {
+            state.db.upsert_endpoint(ep);
         }
     }
     let latency_ms = start.elapsed().as_millis() as u64;

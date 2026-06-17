@@ -1,11 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-// Lightweight CodeMirror 6 wrapper. We use a simple textarea with syntax classes
-// since bundling full CodeMirror requires additional setup. The YAML editor uses
-// a styled textarea with monospace font — CodeMirror can be added as an enhancement.
-// See package.json: codemirror is listed as a dependency for future integration.
-
-export default function YamlEditor({ value, onChange, readOnly }) {
+export default function YamlEditor({ value, onChange, readOnly, fill }) {
   const textareaRef = useRef(null);
 
   const handleKeyDown = (e) => {
@@ -32,16 +27,17 @@ export default function YamlEditor({ value, onChange, readOnly }) {
       spellCheck={false}
       style={{
         width: '100%',
-        minHeight: '300px',
+        minHeight: fill ? undefined : '300px',
+        height: fill ? '100%' : undefined,
         fontFamily: "'JetBrains Mono', monospace",
-        fontSize: '0.8rem',
+        fontSize: '0.85rem',
         lineHeight: '1.5',
         padding: '12px',
-        background: 'var(--bg-tertiary)',
-        color: 'var(--text-primary)',
-        border: '1px solid var(--border)',
+        background: 'var(--card-bg)',
+        color: 'var(--pico-color)',
+        border: '1px solid var(--card-border)',
         borderRadius: '6px',
-        resize: 'vertical',
+        resize: fill ? 'none' : 'vertical',
         tabSize: 2,
       }}
       placeholder="# docker-compose.yml&#10;services:&#10;  web:&#10;    image: nginx:latest&#10;    ports:&#10;      - '80:80'&#10;"

@@ -178,6 +178,7 @@ export default function Stacks() {
       {showCreate && (
         <Modal
           title="Create New Stack"
+          size="large"
           onClose={() => setShowCreate(false)}
           footer={
             <>
@@ -188,7 +189,7 @@ export default function Stacks() {
             </>
           }
         >
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>Stack Name</label>
             <input
               type="text"
@@ -201,7 +202,7 @@ export default function Stacks() {
             <label style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}>
               docker-compose.yml
             </label>
-            <YamlEditor value={yml} onChange={setYml} />
+            <YamlEditor value={yml} onChange={setYml} fill />
           </div>
         </Modal>
       )}
@@ -209,6 +210,7 @@ export default function Stacks() {
       {showEdit && (
         <Modal
           title={`Edit: ${showEdit}`}
+          size="large"
           onClose={() => setShowEdit(null)}
           footer={
             <>
@@ -219,7 +221,7 @@ export default function Stacks() {
             </>
           }
         >
-          <YamlEditor value={editYml} onChange={setEditYml} />
+          <YamlEditor value={editYml} onChange={setEditYml} fill />
         </Modal>
       )}
     </div>

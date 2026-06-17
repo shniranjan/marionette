@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import Modal from '../components/Modal';
+import SetupScriptGenerator from '../components/SetupScriptGenerator';
 import Spinner from '../components/Spinner';
 import { useToast } from '../components/Toast';
 
@@ -28,6 +29,7 @@ export default function Endpoints() {
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(null);
   const [showDelete, setShowDelete] = useState(null);
+  const [showGenerator, setShowGenerator] = useState(false);
   const [testing, setTesting] = useState({});
   const [testResults, setTestResults] = useState({});
   const [saving, setSaving] = useState(false);
@@ -159,6 +161,7 @@ export default function Endpoints() {
         <h1>Endpoints ({endpoints.length})</h1>
         <div className="btn-group">
           <button className="btn-primary" onClick={() => setShowAdd(true)}>+ Add Endpoint</button>
+          <button onClick={() => setShowGenerator(true)}>🔧 Setup Script</button>
           <button onClick={load}>🔄 Refresh</button>
         </div>
       </div>
@@ -406,6 +409,11 @@ export default function Endpoints() {
             )}
           </div>
         </Modal>
+      )}
+
+      {/* Setup Script Generator */}
+      {showGenerator && (
+        <SetupScriptGenerator onClose={() => setShowGenerator(false)} />
       )}
     </div>
   );

@@ -7,7 +7,7 @@ description = "Marionette — Docker Infrastructure Management Platform (core)"
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 axum-extra = { version = "0.10", features = ["query"] }
-bollard = "0.17"
+bollard = { version = "0.17", features = ["ssl"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
