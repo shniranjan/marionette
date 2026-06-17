@@ -23,10 +23,19 @@ export default function LogViewer({ containerId }) {
     ws.onerror = () => setConnected(false);
 
     ws.onmessage = (e) => {
-      setLines((prev) => {
-        const next = [...prev, e.data];
-        return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
-      });
+      try {
+        const data = JSON.parse(e.data);
+        const text = data.stream || data.error || e.data;
+        setLines((prev) => {
+          const next = [...prev, text];
+          return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
+        });
+      } catch {
+        setLines((prev) => {
+          const next = [...prev, e.data];
+          return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
+        });
+      }
     };
 
     return () => {
