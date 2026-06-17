@@ -150,11 +150,11 @@ button:disabled {
 .btn-success:hover { background: #35a344; }
 
 .btn-danger {
-  background: var(--red);
-  border-color: var(--red);
+  background: #c0392b;
+  border-color: #e74c3c;
   color: #fff;
 }
-.btn-danger:hover { background: #e0483f; }
+.btn-danger:hover { background: #e74c3c; }
 
 .btn-warning {
   background: #b08800;

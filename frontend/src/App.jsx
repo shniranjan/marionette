@@ -16,6 +16,7 @@ import Endpoints from './pages/Endpoints';
 import Migration from './pages/Migration';
 import Swarm from './pages/Swarm';
 import Nginx from './pages/Nginx';
+import ErrorBoundary from './components/ErrorBoundary';
 
 const PAGES = {
   dashboard: Dashboard,
@@ -89,7 +90,9 @@ export default function App() {
           onEndpointChange={handleEndpointChange}
         />
         <main className="main-content">
-          <PageComponent navigate={navigate} currentEndpoint={currentEndpoint} {...pageProps} />
+          <ErrorBoundary key={page}>
+            <PageComponent navigate={navigate} currentEndpoint={currentEndpoint} {...pageProps} />
+          </ErrorBoundary>
         </main>
       </div>
     </ToastProvider>
