@@ -95,11 +95,13 @@ export default function Swarm({ navigate }) {
         api.get('/swarm/secrets').catch(() => []),
         api.get('/swarm/configs').catch(() => []),
       ]);
-      const swData = sw || null;
-      const ndData = Array.isArray(nd) ? nd : (nd?.nodes || nd || []);
-      const svData = Array.isArray(sv) ? sv : (sv?.services || sv || []);
-      const seData = Array.isArray(se) ? se : (se?.secrets || se || []);
-      const cfData = Array.isArray(cf) ? cf : (cf?.configs || cf || []);
+      // Validate swarm: error responses from Docker (like "not a swarm manager")
+      // come back as objects with .message, not actual swarm data with .ID
+      const swData = (sw && sw.ID) ? sw : null;
+      const ndData = Array.isArray(nd) ? nd : (Array.isArray(nd?.nodes) ? nd.nodes : []);
+      const svData = Array.isArray(sv) ? sv : (Array.isArray(sv?.services) ? sv.services : []);
+      const seData = Array.isArray(se) ? se : (Array.isArray(se?.secrets) ? se.secrets : []);
+      const cfData = Array.isArray(cf) ? cf : (Array.isArray(cf?.configs) ? cf.configs : []);
       setSwarm(swData);
       setNodes(ndData);
       setServices(svData);
@@ -110,7 +112,7 @@ export default function Swarm({ navigate }) {
       if (svData.length > 0) {
         try {
           const allTasks = await api.get('/swarm/tasks');
-          setTasks(Array.isArray(allTasks) ? allTasks : (allTasks?.tasks || []));
+          setTasks(Array.isArray(allTasks) ? allTasks : (Array.isArray(allTasks?.tasks) ? allTasks.tasks : []));
         } catch { /* tasks are optional */ }
       }
     } catch (err) {

@@ -12,6 +12,30 @@ services:
       - "8080:80"
 `;
 
+function StatusBadge({ status }) {
+  const s = (status || 'unknown').toLowerCase();
+  const colors = {
+    running:  { bg: '#1a3a1a', fg: '#4caf50', label: 'Running' },
+    stopped:  { bg: '#2a2a2a', fg: '#999',    label: 'Stopped' },
+    unknown:  { bg: '#2a2a15', fg: '#ccc',    label: 'Unknown' },
+  };
+  const c = colors[s] || colors.unknown;
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '1px 10px',
+      borderRadius: '10px',
+      fontSize: '0.7rem',
+      fontWeight: 600,
+      background: c.bg,
+      color: c.fg,
+      border: `1px solid ${c.fg}`,
+    }}>
+      {c.label}
+    </span>
+  );
+}
+
 export default function Stacks() {
   const [stacks, setStacks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,7 +45,6 @@ export default function Stacks() {
   const [stackName, setStackName] = useState('');
   const [creating, setCreating] = useState(false);
 
-  // Edit state
   const [showEdit, setShowEdit] = useState(null);
   const [editYml, setEditYml] = useState('');
   const [editSaving, setEditSaving] = useState(false);
@@ -122,20 +145,28 @@ export default function Stacks() {
           {stacks.map((stack) => {
             const name = stack.Name || stack.name;
             const svcCount = stack.Services || stack.serviceCount || 0;
+            const status = (stack.Status || stack.status || 'unknown').toLowerCase();
+            const isRunning = status === 'running';
             return (
               <div key={name} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: '1rem' }}>{name}</div>
                   <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
-                    Services: {svcCount}
-                    {stack.Status && <span> &nbsp;|&nbsp; Status: {stack.Status}</span>}
+                    Services: {svcCount} &nbsp;|&nbsp;
+                    <StatusBadge status={status} />
                   </div>
                 </div>
                 <div className="btn-group">
                   <button className="btn-sm" onClick={() => handleEdit(name)}>✏ Edit</button>
-                  <button className="btn-success btn-sm" onClick={() => handleAction(name, 'deploy')}>▶ Deploy</button>
-                  <button className="btn-warning btn-sm" onClick={() => handleAction(name, 'stop')}>⏹ Stop</button>
-                  <button className="btn-sm" onClick={() => handleAction(name, 'down')}>⬇ Down</button>
+                  {!isRunning && (
+                    <button className="btn-success btn-sm" onClick={() => handleAction(name, 'deploy')}>▶ Deploy</button>
+                  )}
+                  {isRunning && (
+                    <>
+                      <button className="btn-warning btn-sm" onClick={() => handleAction(name, 'stop')}>⏹ Stop</button>
+                      <button className="btn-sm" onClick={() => handleAction(name, 'down')}>⬇ Down</button>
+                    </>
+                  )}
                   <button className="btn-danger btn-sm" onClick={() => handleDelete(name)}>🗑</button>
                 </div>
               </div>
@@ -144,7 +175,6 @@ export default function Stacks() {
         </div>
       )}
 
-      {/* Create Stack Modal */}
       {showCreate && (
         <Modal
           title="Create New Stack"
@@ -176,7 +206,6 @@ export default function Stacks() {
         </Modal>
       )}
 
-      {/* Edit Stack Modal */}
       {showEdit && (
         <Modal
           title={`Edit: ${showEdit}`}

@@ -31,7 +31,27 @@ impl ComposeRunner {
         if output.status.success() {
             Ok(stdout)
         } else {
-            Err(format!("docker compose failed: {}", if stderr.is_empty() { stdout } else { stderr }))
+            Err(format!(
+                "docker compose failed: {}",
+                if stderr.is_empty() { stdout } else { stderr }
+            ))
+        }
+    }
+
+    /// Check if a stack has running services by running `docker compose ps`.
+    /// Returns "running" if at least one service is up, "stopped" otherwise.
+    pub fn stack_status(&self, stack_name: &str) -> String {
+        match self.run(stack_name, &["ps", "--format", "{{.Status}}"]) {
+            Ok(output) => {
+                if output.lines().any(|l| l.starts_with("Up") || l.starts_with("running")) {
+                    "running".to_string()
+                } else if output.trim().is_empty() {
+                    "stopped".to_string()
+                } else {
+                    "stopped".to_string()
+                }
+            }
+            Err(_) => "unknown".to_string(),
         }
     }
 
@@ -62,10 +82,12 @@ impl ComposeRunner {
                         .map(|c| c.lines().filter(|l| l.trim().starts_with("image:")).count())
                         .unwrap_or(0);
 
+                    let status = self.stack_status(&name);
+
                     stacks.push(crate::models::StackSummary {
                         name,
                         services,
-                        status: "unknown".to_string(),
+                        status,
                         file: actual_file.to_string_lossy().to_string(),
                     });
                 }
