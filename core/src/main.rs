@@ -28,6 +28,8 @@ use db::Database;
 use crate::routes::endpoints;
 use crate::routes::nginx;
 use crate::routes::swarm;
+use crate::routes::routes_config;
+use crate::routes::users;
 
 /// Shared application state.
 pub struct AppState {
@@ -203,6 +205,17 @@ async fn main() {
         .route("/endpoints/{id}", delete(endpoints::delete_endpoint))
         .route("/endpoints/{id}/test", post(endpoints::test_endpoint))
         .route("/endpoints/{id}/reconnect", post(endpoints::reconnect_endpoint))
+        // Routes (AuxGate config)
+        .route("/routes", get(routes_config::list_routes))
+        .route("/routes", post(routes_config::create_route))
+        .route("/routes/{id}", get(routes_config::get_route))
+        .route("/routes/{id}", patch(routes_config::update_route))
+        .route("/routes/{id}", delete(routes_config::delete_route))
+        .route("/routes/{id}/access", get(routes_config::list_route_access))
+        .route("/routes/{id}/access", post(routes_config::grant_route_access))
+        .route("/routes/{id}/access/{user_id}", delete(routes_config::revoke_route_access))
+        // Users
+        .route("/users", get(users::list_users))
         // Migration
         .route("/migration/analyze", post(migration::analyze_migration))
         .route("/migration/plan", post(migration::plan_migration))

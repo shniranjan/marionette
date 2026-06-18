@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { id: 'swarm', label: 'Swarm', icon: '🐝' },
   { id: 'nginx', label: 'Nginx LB', icon: '⚖️' },
   { id: 'stacks', label: 'Stacks', icon: '📚' },
+  { id: 'routes', label: 'Routes', icon: '🔀' },
   { id: 'migration', label: 'Migration', icon: '🚚' },
   { id: 'system', label: 'System', icon: '⚙' },
 ];
@@ -25,7 +26,7 @@ export default function Sidebar({ currentPage, onNavigate, currentEndpoint, onEn
       borderRight: '1px solid var(--border)',
       display: 'flex',
       flexDirection: 'column',
-      overflow: 'hidden',
+      overflow: 'visible',
     }}>
       {/* Brand */}
       <div style={{

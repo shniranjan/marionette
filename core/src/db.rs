@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing;
 
-use crate::models::{DockerEndpoint, EndpointStatus, UserRole};
+use crate::models::{DockerEndpoint, EndpointStatus, Route, UserRole, UserSummary};
 
 /// Central database for Marionette — users, endpoints, routes, audit log.
 /// All tables share one SQLite database at the path configured by MARIONETTE_DB_PATH.
@@ -227,6 +227,167 @@ impl Database {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![timestamp, action, endpoint_id, target, detail, key_short],
         ).ok();
+    }
+
+    // ── Routes ────────────────────────────────────────────────────────
+
+    /// List all routes.
+    pub fn list_routes(&self) -> Vec<Route> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, path, target, auth_mode, auth_value, tls, active, created_at FROM routes",
+            )
+            .expect("Failed to prepare route query");
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let path: String = row.get(1)?;
+                let target: String = row.get(2)?;
+                let auth_mode: String = row.get(3)?;
+                let auth_value: Option<String> = row.get(4)?;
+                let tls_int: i64 = row.get(5)?;
+                let active_int: i64 = row.get(6)?;
+                let created_at: String = row.get(7)?;
+                Ok(Route {
+                    id,
+                    path,
+                    target,
+                    auth_mode,
+                    auth_value,
+                    tls: tls_int != 0,
+                    active: active_int != 0,
+                    created_at,
+                })
+            })
+            .expect("Failed to query routes");
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// Get a single route by ID.
+    pub fn get_route(&self, id: &str) -> Option<Route> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, path, target, auth_mode, auth_value, tls, active, created_at FROM routes WHERE id = ?1",
+            )
+            .expect("Failed to prepare route query");
+        stmt.query_row(rusqlite::params![id], |row| {
+            let id: String = row.get(0)?;
+            let path: String = row.get(1)?;
+            let target: String = row.get(2)?;
+            let auth_mode: String = row.get(3)?;
+            let auth_value: Option<String> = row.get(4)?;
+            let tls_int: i64 = row.get(5)?;
+            let active_int: i64 = row.get(6)?;
+            let created_at: String = row.get(7)?;
+            Ok(Route {
+                id,
+                path,
+                target,
+                auth_mode,
+                auth_value,
+                tls: tls_int != 0,
+                active: active_int != 0,
+                created_at,
+            })
+        })
+        .ok()
+    }
+
+    /// Insert or replace a route.
+    pub fn upsert_route(&self, route: &Route) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let tls_int: i64 = if route.tls { 1 } else { 0 };
+        let active_int: i64 = if route.active { 1 } else { 0 };
+        conn.execute(
+            "INSERT INTO routes (id, path, target, auth_mode, auth_value, tls, active, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                path=excluded.path,
+                target=excluded.target,
+                auth_mode=excluded.auth_mode,
+                auth_value=excluded.auth_value,
+                tls=excluded.tls,
+                active=excluded.active",
+            rusqlite::params![
+                route.id,
+                route.path,
+                route.target,
+                route.auth_mode,
+                route.auth_value,
+                tls_int,
+                active_int,
+                route.created_at,
+            ],
+        )
+        .expect("Failed to upsert route");
+    }
+
+    /// Delete a route by ID.
+    pub fn delete_route(&self, id: &str) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        conn.execute("DELETE FROM routes WHERE id = ?1", rusqlite::params![id])
+            .expect("Failed to delete route");
+    }
+
+    /// List user IDs that have access to a route.
+    pub fn list_route_access(&self, route_id: &str) -> Vec<String> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare("SELECT user_id FROM route_access WHERE route_id = ?1")
+            .expect("Failed to prepare route_access query");
+        let rows = stmt
+            .query_map(rusqlite::params![route_id], |row| row.get::<_, String>(0))
+            .expect("Failed to query route_access");
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// Grant a user access to a route.
+    pub fn grant_route_access(&self, route_id: &str, user_id: &str) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        conn.execute(
+            "INSERT OR IGNORE INTO route_access (route_id, user_id) VALUES (?1, ?2)",
+            rusqlite::params![route_id, user_id],
+        )
+        .expect("Failed to grant route access");
+    }
+
+    /// Revoke a user's access to a route.
+    pub fn revoke_route_access(&self, route_id: &str, user_id: &str) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        conn.execute(
+            "DELETE FROM route_access WHERE route_id = ?1 AND user_id = ?2",
+            rusqlite::params![route_id, user_id],
+        )
+        .expect("Failed to revoke route access");
+    }
+
+    // ── Users (list) ─────────────────────────────────────────────────
+
+    /// List all users.
+    pub fn list_users(&self) -> Vec<UserSummary> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare("SELECT id, name, role, active, created_at FROM users")
+            .expect("Failed to prepare users query");
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let role: String = row.get(2)?;
+                let active_int: i64 = row.get(3)?;
+                let created_at: String = row.get(4)?;
+                Ok(UserSummary {
+                    id,
+                    name,
+                    role,
+                    active: active_int != 0,
+                    created_at,
+                })
+            })
+            .expect("Failed to query users");
+        rows.filter_map(|r| r.ok()).collect()
     }
 }
 

@@ -52,47 +52,72 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 | Module | Capabilities |
 |--------|-------------|
 | **Dashboard** | Container counts, resource usage, system info, quick actions |
-| **Containers** | List, inspect, start/stop/restart/kill/pause/rename/remove. Live logs and stats streaming via WebSocket. 6-tab detail view (info, logs, stats, env, mounts, network). |
-| **Images** | List, pull (with progress), inspect, remove, layer history |
-| **Volumes** | List, create, remove, prune, deep inspection (driver, size, usage, file count) |
-| **Networks** | List, create, remove, connect/disconnect containers, prune |
-| **Stacks** | List compose stacks, edit YAML (CodeMirror), save, deploy, stop, down. Detects running/stopped status. Supports both `docker-compose.yml` and `compose.yml`. |
-| **Endpoints** | Connect multiple Docker hosts. Host switcher in sidebar. Connection testing. |
-| **Swarm** | Nodes, services, tasks, secrets, configs. Init/join/leave. Scale and update services. Visualizer. |
+| **Containers** | List with selection toolbar (start/stop/restart/remove), inspect, rename. Live logs and stats streaming via WebSocket (CPU/Memory/Network history charts). 6-tab detail view. |
+| **Images** | List with selection toolbar, pull (with progress), inspect, remove, layer history |
+| **Volumes** | List with selection toolbar, create, remove, prune, deep inspection (driver, size, usage, file count) |
+| **Networks** | List with selection toolbar, create, remove, connect/disconnect containers, prune |
+| **Stacks** | List compose stacks, edit YAML (CodeMirror), save-only or save & deploy. Detects running/stopped status. Supports both `docker-compose.yml` and `compose.yml`. |
+| **Endpoints** | Connect multiple Docker hosts (unix, TCP, TLS). Host switcher in sidebar. Connection testing. Setup-script generator for remote Docker TLS configuration. |
+| **Swarm** | Nodes, services, tasks, secrets, configs. Init/join/leave. Scale and update services. |
 | **Nginx LB** | Label-driven upstream config generation (`marionette.lb.*`). Regenerate, test, and reload nginx config from the UI. |
 | **Migration** | 9-step guided wizard. Cold migration with volume sync. Database connection review. Dry run. Command-only (no SSH keys stored). |
-| **System** | Docker info, version, events stream (SSE), prune all resource types, audit log |
+| **System** | Docker info, version, events stream, prune all resource types, audit log |
 | **Auth** | Access key (`X-Marionette-Key` header). Multiple key support. Dev mode (no key required). |
-| **Themes** | Dark, Light, Sepia — persists across sessions |
+| **Design** | Pico CSS foundation. 6 color palettes × 3 modes (18 visual variants). Dark/Light/Sepia × Blue/Slate/Amber/Green/Violet/Rose. |
+| **TLS** | Auto-generated self-signed certificate on first run. Persists across restarts. Overridable with your own cert. |
+| **Resilience** | Maintenance overlay detects server downtime, shows timer, auto-reconnects when back online. |
+
+---
+
+## Roadmap
+
+### In progress (Marionette core)
+
+- **Route management** — CRUD route table for the AuxGate reverse proxy. Auto-discover containers as targets. Per-route authentication keys.
+- **Role-based access** — Admin, operator, and viewer roles. Per-user API keys with granular permissions.
+
+### Planned (standalone companion projects)
+
+| Project | Description | Status |
+|---------|-------------|--------|
+| **AuxGate** | Nginx-based HTTP reverse proxy. TLS termination, API key auth, rate limiting, IP whitelist. Single-container sidecar. Config via env vars. Works standalone or managed by Marionette. | Designed |
+| **Router** | Network-layer container (nftables + dnsmasq + WireGuard). Port forwarding, firewall, NAT, DNS, DHCP, VPN. Managed from Marionette UI. | Designed |
+| **MQTT Manager** | Mosquitto broker with web GUI. Deploy, manage users/ACLs, live topic tree, message inspector. | Designed |
+
+> **Design principle:** Companion projects are standalone Docker images usable without Marionette. Marionette adds management UI on top — zero runtime coupling via shared volume config.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│              marionette (single container)    │
-│                                               │
-│  ┌───────────┐  ┌──────────┐  ┌───────────┐  │
-│  │ React SPA │  │ Fastify  │  │ Rust Core │  │
-│  │ (Vite)    │──│ Gateway  │──│ (Axum)    │  │
-│  │           │  │ :8000    │  │ :9119     │  │
-│  └───────────┘  └──────────┘  └─────┬─────┘  │
-│                                      │        │
-│  ┌──────────┐                        │        │
-│  │  Nginx   │                        │        │
-│  │  :80/443 │                        │        │
-│  └──────────┘                        │        │
-└──────────────────────────────────────┼────────┘
-                                       │
-                              /var/run/docker.sock
-                                       │
-                                Docker Daemon
+┌──────────────────────────────────────────────────────────┐
+│                     Docker Host                           │
+│                                                           │
+│  ┌──────────────┐              ┌──────────────────────┐   │
+│  │   AuxGate    │              │     Marionette        │   │
+│  │  (separate   │              │     (management)     │   │
+│  │   container) │              │                       │   │
+│  │              │              │  React SPA  Fastify   │   │
+│  │  Nginx :443  │              │  Gateway     Rust     │   │
+│  │  TLS + auth  │              │  Core :9119           │   │
+│  │              │              │                       │   │
+│  │  reads route │◀────shared───│  writes route config   │   │
+│  │  config      │    volume    │  manages endpoints     │   │
+│  └──────┬───────┘              └───────────┬───────────┘   │
+│         │                                  │               │
+│         │ HTTP proxy                       │ Docker API    │
+│         ▼                                  ▼               │
+│  ┌──────────┐                      /var/run/docker.sock    │
+│  │ Your Apps│                                               │
+│  │ :3000    │                                               │
+│  └──────────┘                                               │
+└──────────────────────────────────────────────────────────┘
 ```
 
-**Tech Stack:** Rust (Axum + bollard) | Node 22 + TypeScript (Fastify) | React 19 + Vite | CodeMirror 6 | Nginx | supervisord
+**Marionette** manages containers and writes route config. **AuxGate** (separate container) reads config and proxies traffic. Zero runtime coupling — Marionette can be down, AuxGate still routes. AuxGate can be deployed standalone without Marionette.
 
-For full architecture details, see [Architecture](docs/architecture.md).
+**Tech Stack:** Rust (Axum + bollard) | Node 22 + TypeScript (Fastify) | React 19 + Vite | Pico CSS | Recharts | Nginx (internal LB) | supervisord | SQLite
 
 ---
 
@@ -142,6 +167,10 @@ environment:
 
 The cert persists across restarts when `./certs:/app/certs` is mounted. Remove the volume to regenerate.
 
+---
+
+## Configuration
+
 | Env Var | Required | Default | Description |
 |---------|:--------:|---------|-------------|
 | `MARIONETTE_KEY` | Production | — | Access key for web UI. Empty = no auth (dev only). Multiple keys: `key1,key2` |
@@ -154,11 +183,13 @@ The cert persists across restarts when `./certs:/app/certs` is mounted. Remove t
 
 ## Security
 
+- **TLS by default:** Auto-generated self-signed certificate on first run. HTTPS everywhere. Override with your own cert via `TLS_KEY`/`TLS_CERT` env vars. [TLS Configuration](#tls-configuration)
 - **Access Key:** All `/api/*` requests require `X-Marionette-Key` header when `MARIONETTE_KEY` is set. WebSocket connections are exempt (browsers cannot set custom headers on WebSocket).
 - **Credential Masking:** Environment variables and volume driver options are masked by default in the UI
 - **Socket Proxy:** Remote hosts use `tecnativa/docker-socket-proxy` with granular API permissions
 - **Audit Log:** All mutating actions are logged with timestamp, admin key hash, and target
 - **No SSH Keys Stored:** Migration transfer uses command generation — marionette never holds SSH credentials
+- **Maintenance Overlay:** Client-side detection of server downtime with auto-reconnect
 
 See [Security](docs/security.md) for the full threat model and mitigations.
 

@@ -16,6 +16,7 @@ import Endpoints from './pages/Endpoints';
 import Migration from './pages/Migration';
 import Swarm from './pages/Swarm';
 import Nginx from './pages/Nginx';
+import Routes from './pages/Routes';
 import ErrorBoundary from './components/ErrorBoundary';
 import MaintenanceOverlay from './components/MaintenanceOverlay';
 
@@ -32,6 +33,7 @@ const PAGES = {
   migration: Migration,
   swarm: Swarm,
   nginx: Nginx,
+  routes: Routes,
 };
 
 export default function App() {
