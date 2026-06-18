@@ -7,6 +7,7 @@ node_modules/
 gateway/node_modules/
 frontend/node_modules/
 frontend/dist/
+gateway/dist/
 
 # Python (scripts)
 __pycache__/
@@ -17,6 +18,7 @@ __pycache__/
 .idea/
 *.swp
 *.swo
+.folders
 
 # OS
 .DS_Store
@@ -34,8 +36,6 @@ data/
 # Build artifacts
 *.tar.gz
 
-# Editor/IDE folders
-.folders
+# AI-generated (never push)
 .hermes/
-gateway/dist/
 docs/project-inception-*
