@@ -62,7 +62,7 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 | **Nginx LB** | Label-driven upstream config generation (`marionette.lb.*`). Regenerate, test, and reload nginx config from the UI. |
 | **Migration** | 9-step guided wizard. Cold migration with volume sync. Database connection review. Dry run. Command-only (no SSH keys stored). |
 | **System** | Docker info, version, events stream, prune all resource types, audit log |
-| **Auth** | Access key (`X-Marionette-Key` header). Multiple key support. Dev mode (no key required). |
+|| **Auth** | Access key authentication. Multiple key support. Dev mode available. |
 | **Design** | Pico CSS foundation. 6 color palettes × 3 modes (18 visual variants). Dark/Light/Sepia × Blue/Slate/Amber/Green/Violet/Rose. |
 | **TLS** | Auto-generated self-signed certificate on first run. Persists across restarts. Overridable with your own cert. |
 | **Resilience** | Maintenance overlay detects server downtime, shows timer, auto-reconnects when back online. |
@@ -90,34 +90,9 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                     Docker Host                           │
-│                                                           │
-│  ┌──────────────┐              ┌──────────────────────┐   │
-│  │   AuxGate    │              │     Marionette        │   │
-│  │  (separate   │              │     (management)     │   │
-│  │   container) │              │                       │   │
-│  │              │              │  React SPA  Fastify   │   │
-│  │  Nginx :443  │              │  Gateway     Rust     │   │
-│  │  TLS + auth  │              │  Core :9119           │   │
-│  │              │              │                       │   │
-│  │  reads route │◀────shared───│  writes route config   │   │
-│  │  config      │    volume    │  manages endpoints     │   │
-│  └──────┬───────┘              └───────────┬───────────┘   │
-│         │                                  │               │
-│         │ HTTP proxy                       │ Docker API    │
-│         ▼                                  ▼               │
-│  ┌──────────┐                      /var/run/docker.sock    │
-│  │ Your Apps│                                               │
-│  │ :3000    │                                               │
-│  └──────────┘                                               │
-└──────────────────────────────────────────────────────────┘
-```
+Marionette manages containers and writes route config. AuxGate (separate container) reads config and proxies traffic. Zero runtime coupling — Marionette can be down, AuxGate still routes. AuxGate can be deployed standalone without Marionette.
 
-**Marionette** manages containers and writes route config. **AuxGate** (separate container) reads config and proxies traffic. Zero runtime coupling — Marionette can be down, AuxGate still routes. AuxGate can be deployed standalone without Marionette.
-
-**Tech Stack:** Rust (Axum + bollard) | Node 22 + TypeScript (Fastify) | React 19 + Vite | Pico CSS | Recharts | Nginx (internal LB) | supervisord | SQLite
+**Tech Stack:** Rust + Node.js + React + SQLite
 
 ---
 
@@ -176,7 +151,7 @@ The cert persists across restarts when `./certs:/app/certs` is mounted. Remove t
 | `MARIONETTE_KEY` | Production | — | Access key for web UI. Empty = no auth (dev only). Multiple keys: `key1,key2` |
 | `MARIONETTE_STACKS_DIR` | No | `/stacks` | Directory for docker-compose stack files |
 | `MARIONETTE_DB_PATH` | No | `/data/marionette.db` | SQLite database path for audit log |
-| `MARIONETTE_NGINX_DIR` | No | `/etc/nginx/upstreams` | Output directory for generated nginx upstream configs |
+|| `MARIONETTE_NGINX_DIR` | No | — | Output directory for generated nginx upstream configs |
 | `MARIONETTE_LOG_LEVEL` | No | `info` | Log level: trace, debug, info, warn, error |
 
 ---
@@ -184,7 +159,7 @@ The cert persists across restarts when `./certs:/app/certs` is mounted. Remove t
 ## Security
 
 - **TLS by default:** Auto-generated self-signed certificate on first run. HTTPS everywhere. Override with your own cert via `TLS_KEY`/`TLS_CERT` env vars. [TLS Configuration](#tls-configuration)
-- **Access Key:** All `/api/*` requests require `X-Marionette-Key` header when `MARIONETTE_KEY` is set. WebSocket connections are exempt (browsers cannot set custom headers on WebSocket).
+- **Access Key:** All API requests require authentication when `MARIONETTE_KEY` is set.
 - **Credential Masking:** Environment variables and volume driver options are masked by default in the UI
 - **Socket Proxy:** Remote hosts use `tecnativa/docker-socket-proxy` with granular API permissions
 - **Audit Log:** All mutating actions are logged with timestamp, admin key hash, and target
