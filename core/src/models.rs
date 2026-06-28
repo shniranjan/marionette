@@ -13,6 +13,8 @@ pub struct DockerEndpoint {
     #[serde(skip)]
     pub status: EndpointStatus,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub cert_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

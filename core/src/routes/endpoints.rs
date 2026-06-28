@@ -35,6 +35,8 @@ pub struct EndpointCreateBody {
     pub connection: String,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub cert_path: Option<String>,
 }
 
 pub async fn create_endpoint(
@@ -52,7 +54,7 @@ pub async fn create_endpoint(
     drop(endpoints);
 
     // Create client
-    let docker = create_client(&body.connection)
+    let docker = create_client(&body.connection, body.cert_path.as_deref())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
 
     // Test connectivity (5s timeout)
@@ -79,6 +81,7 @@ pub async fn create_endpoint(
         connection: body.connection.clone(),
         status: EndpointStatus::Connected,
         tags: body.tags,
+        cert_path: body.cert_path.clone(),
     };
 
     // Insert into both maps
@@ -148,6 +151,8 @@ pub struct EndpointUpdateBody {
     pub connection: Option<String>,
     #[serde(default)]
     pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub cert_path: Option<Option<String>>,
 }
 
 pub async fn update_endpoint(
@@ -157,9 +162,27 @@ pub async fn update_endpoint(
 ) -> ApiResult<serde_json::Value> {
     let mut detail_parts: Vec<String> = Vec::new();
 
-    // If connection changed, validate and recreate client first
-    if let Some(ref connection) = body.connection {
-        let docker = create_client(connection)
+    // Determine effective cert_path: explicit update or fall back to existing
+    let effective_cert_path = if body.cert_path.is_some() {
+        body.cert_path.clone().flatten()
+    } else {
+        // Use existing endpoint's cert_path (read under read lock)
+        let endpoints = state.endpoints.read().await;
+        endpoints.get(&id).and_then(|ep| ep.cert_path.clone())
+    };
+
+    // If connection or cert_path changed, validate and recreate client
+    let needs_reconnect = body.connection.is_some() || body.cert_path.is_some();
+    if needs_reconnect {
+        let connection_str = if let Some(ref conn) = body.connection {
+            conn.clone()
+        } else {
+            let endpoints = state.endpoints.read().await;
+            endpoints.get(&id)
+                .map(|ep| ep.connection.clone())
+                .unwrap_or_default()
+        };
+        let docker = create_client(&connection_str, effective_cert_path.as_deref())
             .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
         // Quick connectivity test
         match timeout(Duration::from_secs(5), docker.ping()).await {
@@ -179,7 +202,7 @@ pub async fn update_endpoint(
         }
         let mut clients = state.clients.write().await;
         clients.insert(id.clone(), docker);
-        detail_parts.push(format!("connection={}", connection));
+        detail_parts.push(format!("connection={}", connection_str));
     }
 
     // Update endpoint fields
@@ -200,6 +223,9 @@ pub async fn update_endpoint(
         if let Some(tags) = body.tags {
             detail_parts.push("tags=updated".to_string());
             endpoint.tags = tags;
+        }
+        if body.cert_path.is_some() {
+            endpoint.cert_path = body.cert_path.clone().flatten();
         }
     }
 
@@ -309,16 +335,16 @@ pub async fn reconnect_endpoint(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let connection = {
+    let (connection, cert_path) = {
         let endpoints = state.endpoints.read().await;
         let ep = endpoints.get(&id).ok_or_else(|| {
             error(StatusCode::NOT_FOUND, &format!("Endpoint '{}' not found", id))
         })?;
-        ep.connection.clone()
+        (ep.connection.clone(), ep.cert_path.clone())
     };
 
     // Recreate client
-    let docker = create_client(&connection)
+    let docker = create_client(&connection, cert_path.as_deref())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
 
     // Test connectivity
