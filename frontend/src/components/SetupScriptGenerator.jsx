@@ -92,34 +92,62 @@ cat > "$DAEMON_JSON" <<'DAEMONEOF'
 }
 DAEMONEOF
 
+# Handle systemd hosts conflict — Debian/Ubuntu ship with -H fd://
+# Docker refuses to start if hosts are in both daemon.json AND ExecStart
+if grep -q -- '-H[= ]' /usr/lib/systemd/system/docker.service 2>/dev/null || \
+   systemctl cat docker.service 2>/dev/null | grep -q -- '-H[= ]'; then
+  echo "  Detected -H in systemd unit — creating drop-in override..."
+  mkdir -p /etc/systemd/system/docker.service.d
+  cat > /etc/systemd/system/docker.service.d/marionette-override.conf <<'OVERRIDEEOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd --containerd=/run/containerd/containerd.sock
+OVERRIDEEOF
+  systemctl daemon-reload
+fi
+
 echo "  Restarting Docker daemon..."
 systemctl restart docker
 sleep 2
 systemctl status docker --no-pager | head -5
 
-# ── Step 6: Output connection details ──────────────────────────────────────
+# ── Step 6: Copy client certs for the user ──────────────────────────────────
+echo ""
+echo "[6/7] Making client certs readable..."
+CLIENT_DIR="$HOME/marionette-certs"
+mkdir -p "$CLIENT_DIR"
+cp ca.pem client-cert.pem client-key.pem "$CLIENT_DIR/"
+chmod 600 "$CLIENT_DIR"/*
+chown -R "$(logname 2>/dev/null || echo "$SUDO_USER"):" "$CLIENT_DIR/" 2>/dev/null || true
+
 echo ""
 echo "================================================================"
 echo "  SETUP COMPLETE"
 echo "================================================================"
 echo ""
-echo "  Copy the following client files to your Marionette host"
+echo "  Client certs are in: $CLIENT_DIR"
+echo ""
+echo "  Copy these three files to your Marionette host"
 echo "  (e.g., /opt/marionette/certs/):"
 echo ""
-echo "    - $CERTS_DIR/ca.pem"
-echo "    - $CERTS_DIR/client-cert.pem"
-echo "    - $CERTS_DIR/client-key.pem"
+echo "    - $CLIENT_DIR/ca.pem"
+echo "    - $CLIENT_DIR/client-cert.pem"
+echo "    - $CLIENT_DIR/client-key.pem"
 echo ""
 echo "  Connection string for Marionette:"
 echo "    https://$HOST_IP:${dockerPort}"
 echo ""
-echo "  On your Marionette host, copy the client certs to a directory"
-echo "  (e.g., /opt/marionette/certs/) and set DOCKER_CERT_PATH:"
-echo ""
+echo "  On your Marionette host, set DOCKER_CERT_PATH:"
 echo "    export DOCKER_CERT_PATH=/opt/marionette/certs"
 echo ""
+echo "  To verify locally (use 127.0.0.1, not localhost — cert is IP-based):"
+echo "    curl --cacert $CLIENT_DIR/ca.pem \\\\"
+echo "      --cert $CLIENT_DIR/client-cert.pem \\\\"
+echo "      --key $CLIENT_DIR/client-key.pem \\\\"
+echo "      https://127.0.0.1:${dockerPort}/version"
+echo ""
 echo "  To verify from the Marionette host:"
-echo "    curl --cacert ca.pem --cert client-cert.pem --key client-key.pem \\\\"
+echo "    curl --cacert ca.pem --cert client-cert.pem --key client-key.pem \\\\\\\\"
 echo "      https://$HOST_IP:${dockerPort}/version"
 echo ""
 echo "================================================================"
