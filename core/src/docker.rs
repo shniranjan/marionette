@@ -6,29 +6,31 @@ use crate::models::{DockerEndpoint, EndpointStatus};
 
 /// Create a bollard Docker client for a given connection string.
 /// Supports unix:// sockets, tcp://, https:// (TLS), and ssh:// connections.
-pub fn create_client(connection: &str) -> Result<Docker, String> {
+/// `cert_path` overrides DOCKER_CERT_PATH env var for per-endpoint TLS certs.
+pub fn create_client(connection: &str, cert_path: Option<&str>) -> Result<Docker, String> {
     if connection.starts_with("unix://") {
         let path = connection.strip_prefix("unix://").unwrap_or("/var/run/docker.sock");
         Docker::connect_with_socket(path, 120, bollard::API_DEFAULT_VERSION)
             .map_err(|e| format!("Failed to connect to Docker socket {}: {}", path, e))
     } else if connection.starts_with("https://") || connection.starts_with("tcp+tls://") {
-        // TLS connection — uses DOCKER_CERT_PATH for certs (same convention as docker CLI)
-        // Format: https://host:2376  or  tcp+tls://host:2376
+        // TLS connection — prefers per-endpoint cert_path, falls back to DOCKER_CERT_PATH
         let addr = connection
             .strip_prefix("https://")
             .or_else(|| connection.strip_prefix("tcp+tls://"))
             .unwrap_or(connection);
         use std::path::Path;
-        let cert_path = std::env::var("DOCKER_CERT_PATH")
-            .unwrap_or_else(|_| {
+        let cert_dir = cert_path
+            .map(|p| p.to_string())
+            .or_else(|| std::env::var("DOCKER_CERT_PATH").ok())
+            .unwrap_or_else(|| {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
                 format!("{}/.docker", home)
             });
-        let ssl_key = Path::new(&cert_path).join("key.pem");
-        let ssl_cert = Path::new(&cert_path).join("cert.pem");
-        let ssl_ca = Path::new(&cert_path).join("ca.pem");
+        let ssl_key = Path::new(&cert_dir).join("key.pem");
+        let ssl_cert = Path::new(&cert_dir).join("cert.pem");
+        let ssl_ca = Path::new(&cert_dir).join("ca.pem");
         Docker::connect_with_ssl(addr, &ssl_key, &ssl_cert, &ssl_ca, 120, bollard::API_DEFAULT_VERSION)
-            .map_err(|e| format!("Failed to connect to Docker via TLS at {}: {}. Ensure DOCKER_CERT_PATH has ca.pem, cert.pem, key.pem", addr, e))
+            .map_err(|e| format!("Failed to connect to Docker via TLS at {}: {}. Ensure cert dir has ca.pem, cert.pem, key.pem", addr, e))
     } else if connection.starts_with("tcp://") {
         Docker::connect_with_http(connection, 120, bollard::API_DEFAULT_VERSION)
             .map_err(|e| format!("Failed to connect to Docker at {}: {}", connection, e))
@@ -56,9 +58,10 @@ pub async fn build_initial_endpoints() -> (
         connection: local_connection.clone(),
         status: EndpointStatus::Disconnected,
         tags: vec!["default".to_string()],
+        cert_path: None,
     };
 
-    match create_client(&local_connection) {
+    match create_client(&local_connection, None) {
         Ok(docker) => {
             clients.insert(local_id.clone(), docker);
             endpoints.insert(

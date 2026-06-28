@@ -38,6 +38,9 @@ impl Database {
                 created_at TEXT NOT NULL
             );
 
+            -- Migrate: add cert_path column (introduced v0.2.2)
+            ALTER TABLE endpoints ADD COLUMN cert_path TEXT;
+
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
@@ -95,7 +98,7 @@ impl Database {
     pub fn load_endpoints(&self) -> Vec<DockerEndpoint> {
         let conn = self.conn.lock().expect("DB lock poisoned");
         let mut stmt = conn
-            .prepare("SELECT id, name, connection, status, tags, created_at FROM endpoints")
+            .prepare("SELECT id, name, connection, status, tags, created_at, cert_path FROM endpoints")
             .expect("Failed to prepare endpoint query");
 
         let rows = stmt
@@ -106,6 +109,7 @@ impl Database {
                 let status_str: String = row.get(3)?;
                 let tags_json: String = row.get(4)?;
                 let _created: String = row.get(5)?;
+                let cert_path: Option<String> = row.get(6)?;
 
                 let status = match status_str.as_str() {
                     "connected" => EndpointStatus::Connected,
@@ -120,6 +124,7 @@ impl Database {
                     connection,
                     status,
                     tags,
+                    cert_path,
                 })
             })
             .expect("Failed to query endpoints");
@@ -135,14 +140,15 @@ impl Database {
         let now = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT INTO endpoints (id, name, connection, status, tags, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO endpoints (id, name, connection, status, tags, cert_path, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 connection=excluded.connection,
                 status=excluded.status,
-                tags=excluded.tags",
-            rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, now],
+                tags=excluded.tags,
+                cert_path=excluded.cert_path",
+            rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, ep.cert_path, now],
         ).expect("Failed to upsert endpoint");
     }
 
@@ -166,9 +172,9 @@ impl Database {
                 let tags_json = serde_json::to_string(&ep.tags).unwrap_or_else(|_| "[]".to_string());
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
-                    "INSERT INTO endpoints (id, name, connection, status, tags, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, now],
+                    "INSERT INTO endpoints (id, name, connection, status, tags, cert_path, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, ep.cert_path, now],
                 ).ok();
             }
         }

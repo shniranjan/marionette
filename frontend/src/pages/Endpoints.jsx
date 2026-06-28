@@ -38,11 +38,13 @@ export default function Endpoints() {
   const [newName, setNewName] = useState('');
   const [newConnection, setNewConnection] = useState('');
   const [newTags, setNewTags] = useState('');
+  const [newCertPath, setNewCertPath] = useState('');
 
   // Edit form
   const [editName, setEditName] = useState('');
   const [editConnection, setEditConnection] = useState('');
   const [editTags, setEditTags] = useState('');
+  const [editCertPath, setEditCertPath] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -66,11 +68,13 @@ export default function Endpoints() {
         name: newName.trim(),
         connection: newConnection.trim(),
         tags: newTags.split(',').map(t => t.trim()).filter(Boolean),
+        certPath: newCertPath.trim() || undefined,
       });
       setShowAdd(false);
       setNewName('');
       setNewConnection('');
       setNewTags('');
+      setNewCertPath('');
       toast('Endpoint added', 'success');
       load();
     } catch (err) {
@@ -89,6 +93,7 @@ export default function Endpoints() {
         name: editName.trim(),
         connection: editConnection.trim() || undefined,
         tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+        certPath: editCertPath.trim() || null,
       });
       setShowEdit(null);
       toast('Endpoint updated', 'success');
@@ -151,6 +156,7 @@ export default function Endpoints() {
     setEditName(ep.name || ep.Name || '');
     setEditConnection(ep.connection || ep.Connection || '');
     setEditTags((ep.tags || ep.Tags || []).join(', '));
+    setEditCertPath(ep.certPath || ep.CertPath || '');
   };
 
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
@@ -328,6 +334,19 @@ export default function Endpoints() {
                 style={{ width: '100%' }}
               />
             </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>TLS Cert Path (optional)</label>
+              <input
+                type="text"
+                value={newCertPath}
+                onChange={e => setNewCertPath(e.target.value)}
+                placeholder="/app/certs/llmdebian"
+                style={{ width: '100%' }}
+              />
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Directory containing ca.pem, cert.pem, key.pem for https:// endpoints
+              </div>
+            </div>
           </div>
         </Modal>
       )}
@@ -383,6 +402,19 @@ export default function Endpoints() {
                 placeholder="production, us-east-1"
                 style={{ width: '100%' }}
               />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>TLS Cert Path</label>
+              <input
+                type="text"
+                value={editCertPath}
+                onChange={e => setEditCertPath(e.target.value)}
+                placeholder="/app/certs/endpoint-name"
+                style={{ width: '100%' }}
+              />
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Leave blank to use DOCKER_CERT_PATH env var
+              </div>
             </div>
           </div>
         </Modal>

@@ -1,0 +1,73 @@
+# Marionette Ecosystem — full stack with AuxGate, MQTT Manager, Router
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ecosystem.yml up -d
+
+services:
+  # ─── AuxGate — Nginx reverse proxy with TLS ─────────────────────────────
+  auxgate:
+    build:
+      context: /opt/data/workspace/auxgate
+    container_name: auxgate
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PROXY_TARGET: http://marionette:8000
+      SERVER_NAME: ${SERVER_NAME:-localhost}
+    volumes:
+      - auxgate-certs:/certs:ro
+      - auxgate-config:/config
+    networks:
+      - marionette-net
+    restart: unless-stopped
+
+  # ─── MQTT Manager — Mosquitto broker + web GUI ─────────────────────────
+  mqtt-manager:
+    build:
+      context: /opt/data/workspace/mqtt-manager
+    container_name: mqtt-manager
+    ports:
+      - "1883:1883"   # MQTT
+      - "8883:8883"   # WebSocket MQTT
+      - "8001:8000"   # Web UI + API (remapped to avoid collision with marionette:8000)
+    volumes:
+      - mqtt-data:/var/lib/mosquitto
+      - mqtt-config:/config
+    environment:
+      MQTT_HOST: localhost
+      MQTT_PORT: "1883"
+      SERVER_PORT: "8000"
+      MQTT_CONFIG_DIR: /config
+    networks:
+      - marionette-net
+    restart: unless-stopped
+
+  # ─── Router — Network-layer firewall + port forwarding ─────────────────
+  router:
+    build:
+      context: /opt/data/workspace/router
+    container_name: router
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      WAN_INTERFACE: ${WAN_INTERFACE:-eth0}
+      LAN_NETWORK: ${LAN_NETWORK:-192.168.1.0/24}
+    volumes:
+      - router-config:/config:ro
+    restart: unless-stopped
+
+networks:
+  marionette-net:
+    driver: bridge
+
+volumes:
+  auxgate-certs:
+    driver: local
+  auxgate-config:
+    driver: local
+  mqtt-data:
+    driver: local
+  mqtt-config:
+    driver: local
+  router-config:
+    driver: local
