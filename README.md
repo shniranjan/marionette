@@ -30,7 +30,7 @@ With docker-compose:
 ```yaml
 services:
   marionette:
-    image: ghcr.io/shniranjan/marionette:v0.4.0
+    image: ghcr.io/shniranjan/marionette:latest
     container_name: marionette
     ports:
       - "8000:8000"     # HTTP → 301 redirect to HTTPS
