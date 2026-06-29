@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import Modal from '../components/Modal';
 import YamlEditor from '../components/YamlEditor';
 import Spinner from '../components/Spinner';
+import ListToolbar, { useSelection } from '../components/ListToolbar';
+import useFilters from '../hooks/useFilters';
+import FilterBar from '../components/FilterBar';
 
 const DEFAULT_YML = `# docker-compose.yml
 services:
@@ -52,7 +55,13 @@ export default function Stacks() {
   const load = useCallback(async () => {
     try {
       const data = await api.get('/api/stacks');
-      setStacks(Array.isArray(data) ? data : (data?.stacks || []));
+      const raw = Array.isArray(data) ? data : (data?.stacks || []);
+      // Normalize: ensure lowercase status field for useFilters
+      const normalized = raw.map(s => ({
+        ...s,
+        status: (s.Status || s.status || 'unknown').toLowerCase(),
+      }));
+      setStacks(normalized);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -62,6 +71,21 @@ export default function Stacks() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const { filtered, searchQuery, setSearchQuery, stateFilter, setStateFilter } = useFilters(stacks, {
+    searchFields: ['name'],
+    stateField: 'status',
+    stateMap: { running: ['running'], stopped: ['stopped', 'exited'] },
+  });
+
+  const filteredIds = useMemo(() => filtered.map(s => s.id || s.Name || s.name), [filtered]);
+
+  const { selected, toggle, clear } = useSelection(stacks, 'id', filteredIds);
+
+  const stateOptions = [
+    { value: 'running', label: 'Running' },
+    { value: 'stopped', label: 'Stopped' },
+  ];
 
   const handleCreate = async () => {
     if (!stackName.trim()) return;
@@ -125,12 +149,22 @@ export default function Stacks() {
     }
   };
 
+  const handleDeleteSelected = async () => {
+    const names = Array.from(selected);
+    if (!confirm(`Delete ${names.length} stack(s)?`)) return;
+    for (const name of names) {
+      try { await api.delete(`/api/stacks/${name}`); } catch (e) { alert('Error: ' + e.message); }
+    }
+    clear();
+    load();
+  };
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
   return (
     <div>
       <div className="section-header">
-        <h1>Stacks ({stacks.length})</h1>
+        <h1>Stacks ({filtered.length}{filtered.length !== stacks.length ? ` / ${stacks.length}` : ''})</h1>
         <div className="btn-group">
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New Stack</button>
           <button onClick={load}>🔄 Refresh</button>
@@ -139,24 +173,55 @@ export default function Stacks() {
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}
 
-      {stacks.length === 0 ? (
+      <ListToolbar
+        selected={selected}
+        total={stacks.length}
+        filteredIds={filteredIds}
+        onClear={clear}
+        actions={[
+          { label: '🗑 Delete', onClick: handleDeleteSelected, variant: 'danger' },
+        ]}
+      />
+
+      <FilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search stacks..."
+        stateFilter={stateFilter}
+        onStateFilterChange={setStateFilter}
+        stateOptions={stateOptions}
+        filteredCount={filtered.length}
+        totalCount={stacks.length}
+      />
+
+      {filtered.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>
           No stacks. Create one to get started.
         </div>
       ) : (
         <div style={{ display: 'grid', gap: '12px' }}>
-          {stacks.map((stack) => {
+          {filtered.map((stack) => {
             const name = stack.Name || stack.name;
             const svcCount = stack.Services || stack.serviceCount || 0;
             const status = (stack.Status || stack.status || 'unknown').toLowerCase();
             const isRunning = status === 'running';
+            const selKey = stack.id || name;
+            const isSel = selected.has(selKey);
             return (
               <div key={name} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: '1rem' }}>{name}</div>
-                  <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
-                    Services: {svcCount} &nbsp;|&nbsp;
-                    <StatusBadge status={status} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <input
+                    type="checkbox"
+                    checked={isSel}
+                    onChange={() => toggle(stack)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '1rem' }}>{name}</div>
+                    <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
+                      Services: {svcCount} &nbsp;|&nbsp;
+                      <StatusBadge status={status} />
+                    </div>
                   </div>
                 </div>
                 <div className="btn-group">

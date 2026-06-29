@@ -1,9 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import Modal from '../components/Modal';
 import JsonTree from '../components/JsonTree';
 import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
+import SortableTable from '../components/SortableTable';
+import FilterBar from '../components/FilterBar';
+import useFilters from '../hooks/useFilters';
+
+const COLUMNS = [
+  { key: 'name', label: 'Name', sortable: true },
+  { key: 'driver', label: 'Driver', sortable: true },
+  { key: 'mountpoint', label: 'Mountpoint', sortable: true },
+];
 
 export default function Volumes() {
   const [volumes, setVolumes] = useState([]);
@@ -29,7 +38,14 @@ export default function Volumes() {
 
   useEffect(() => { load(); }, [load]);
 
-  const { selected, toggle, selectAll, clear } = useSelection(volumes, 'name');
+  const { filtered, searchQuery, setSearchQuery } = useFilters(volumes, {
+    searchFields: ['name', 'driver'],
+  });
+
+  const filteredIds = useMemo(() => filtered.map((v) => v.name), [filtered]);
+
+  const { selected, toggle, toggleAll, selectAll, clear, allFilteredSelected } =
+    useSelection(volumes, 'name', filteredIds);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -91,49 +107,35 @@ export default function Volumes() {
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}
 
+      <FilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Filter volumes..."
+        filteredCount={filtered.length}
+        totalCount={volumes.length}
+      />
+
       <ListToolbar
         selected={selected}
         total={volumes.length}
+        filteredIds={filteredIds}
         onClear={clear}
         actions={[
           { label: '🗑 Remove', onClick: handleRemove, variant: 'danger' },
         ]}
       />
 
-      {volumes.length === 0 ? (
-        <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No volumes</div>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: '32px' }}></th>
-              <th>Name</th>
-              <th>Driver</th>
-              <th>Mountpoint</th>
-            </tr>
-          </thead>
-          <tbody>
-            {volumes.map((v) => {
-              const isSel = selected.has(v.name);
-              return (
-                <tr key={v.name} onClick={() => handleInspect(v.name)} style={{ cursor: 'pointer' }}>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isSel}
-                      onChange={() => toggle(v)}
-                      style={{ width: '14px', height: '14px' }}
-                    />
-                  </td>
-                  <td className="mono">{v.name}</td>
-                  <td>{v.driver}</td>
-                  <td className="mono" style={{ fontSize: '0.75rem' }}>{v.mountpoint}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+      <SortableTable
+        data={filtered}
+        columns={COLUMNS}
+        keyField="name"
+        onRowClick={(row) => handleInspect(row.name)}
+        selected={selected}
+        onToggle={toggle}
+        onToggleAll={toggleAll}
+        allSelected={allFilteredSelected}
+        emptyMessage="No volumes"
+      />
 
       {showCreate && (
         <Modal

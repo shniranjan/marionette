@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import Modal from '../components/Modal';
 import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
+import useFilters from '../hooks/useFilters';
+import FilterBar from '../components/FilterBar';
 
 export default function Networks() {
   const [networks, setNetworks] = useState([]);
@@ -29,7 +31,11 @@ export default function Networks() {
 
   useEffect(() => { load(); }, [load]);
 
-  const { selected, toggle, clear } = useSelection(networks, 'id');
+  const { filtered, searchQuery, setSearchQuery } = useFilters(networks, { searchFields: ['name', 'driver'] });
+
+  const filteredIds = useMemo(() => filtered.map(net => net.id), [filtered]);
+
+  const { selected, toggle, clear } = useSelection(networks, 'id', filteredIds);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -93,7 +99,7 @@ export default function Networks() {
   return (
     <div>
       <div className="section-header">
-        <h1>Networks ({networks.length})</h1>
+        <h1>Networks ({filtered.length}{filtered.length !== networks.length ? ` / ${networks.length}` : ''})</h1>
         <div className="btn-group">
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ Create</button>
           <button className="btn-danger" onClick={handlePrune}>🗑 Prune</button>
@@ -106,17 +112,26 @@ export default function Networks() {
       <ListToolbar
         selected={selected}
         total={networks.length}
+        filteredIds={filteredIds}
         onClear={clear}
         actions={[
           { label: '🗑 Remove', onClick: handleRemove, variant: 'danger' },
         ]}
       />
 
-      {networks.length === 0 ? (
+      <FilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search networks..."
+        filteredCount={filtered.length}
+        totalCount={networks.length}
+      />
+
+      {filtered.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No networks</div>
       ) : (
         <div style={{ display: 'grid', gap: '12px' }}>
-          {networks.map((net) => {
+          {filtered.map((net) => {
             const isSel = selected.has(net.id);
             return (
               <div key={net.id} className="card">

@@ -1,8 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
 import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
+import useFilters from '../hooks/useFilters';
+import SortableTable from '../components/SortableTable';
+import FilterBar from '../components/FilterBar';
+
+function renderPorts(ports) {
+  if (!ports || !Array.isArray(ports) || ports.length === 0) {
+    return <span className="text-secondary">—</span>;
+  }
+  return ports.map((p, i) => (
+    <span key={i} className="mono" style={{ fontSize: '0.7rem', marginRight: '6px' }}>
+      {p.publicPort ? `${p.publicPort}:${p.privatePort}` : p.privatePort}
+    </span>
+  ));
+}
 
 export default function Containers({ navigate }) {
   const [containers, setContainers] = useState([]);
@@ -12,7 +26,17 @@ export default function Containers({ navigate }) {
   const load = useCallback(async () => {
     try {
       const data = await api.get('/api/containers');
-      setContainers(Array.isArray(data) ? data : (data?.containers || []));
+      let items = Array.isArray(data) ? data : (data?.containers || []);
+      // Normalize PascalCase to camelCase
+      items = items.map((c) => ({
+        id: c.id || c.Id,
+        name: (c.name || c.Name || '').replace(/^\//, ''),
+        image: c.image || c.Image || '',
+        state: c.state || c.State || '',
+        status: c.status || c.Status || '',
+        ports: c.ports || c.Ports || [],
+      }));
+      setContainers(items);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -23,18 +47,49 @@ export default function Containers({ navigate }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const { selected, toggle, clear } = useSelection(containers, 'id');
+  const {
+    filtered,
+    searchQuery,
+    setSearchQuery,
+    stateFilter,
+    setStateFilter,
+    sortKey,
+    setSortKey,
+    sortDir,
+    setSortDir,
+  } = useFilters(containers, {
+    searchFields: ['name', 'image'],
+    stateField: 'state',
+    stateMap: {
+      running: ['running'],
+      stopped: ['exited', 'stopped'],
+      paused: ['paused'],
+    },
+  });
 
-  const selectedItems = containers.filter(c => selected.has(c.id));
-  const hasRunning = selectedItems.some(c => c.state === 'running');
-  const hasStopped = selectedItems.some(c => c.state !== 'running' && c.state !== 'removing');
-  const allRunning = selectedItems.length > 0 && selectedItems.every(c => c.state === 'running');
-  const allStopped = selectedItems.length > 0 && selectedItems.every(c => c.state === 'exited' || c.state === 'stopped');
+  // Filtered IDs for selection (derived from filtered data)
+  const filteredIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
+
+  const { selected, toggle, toggleAll, clear, allFilteredSelected } = useSelection(
+    containers,
+    'id',
+    filteredIds,
+  );
+
+  const selectedItems = containers.filter((c) => selected.has(c.id));
+  const hasRunning = selectedItems.some((c) => c.state === 'running');
+  const hasStopped = selectedItems.some(
+    (c) => c.state !== 'running' && c.state !== 'removing',
+  );
 
   const handleAction = async (action) => {
     const ids = Array.from(selected);
     for (const id of ids) {
-      try { await api.post(`/api/containers/${id}/${action}`); } catch (e) { /* continue */ }
+      try {
+        await api.post(`/api/containers/${id}/${action}`);
+      } catch (e) {
+        /* continue */
+      }
     }
     clear();
     load();
@@ -44,11 +99,74 @@ export default function Containers({ navigate }) {
     const ids = Array.from(selected);
     if (!confirm(`Remove ${ids.length} container(s)?`)) return;
     for (const id of ids) {
-      try { await api.delete(`/api/containers/${id}`); } catch (e) { alert('Error: ' + e.message); }
+      try {
+        await api.delete(`/api/containers/${id}`);
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
     }
     clear();
     load();
   };
+
+  const columns = [
+    {
+      key: 'name',
+      label: 'Name',
+      sortable: true,
+      render: (v, row) => (
+        <span
+          className="mono"
+          style={{ fontWeight: 500, color: 'var(--accent)', cursor: 'pointer' }}
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate('containerDetail', { id: row.id, name: row.name });
+          }}
+        >
+          {v}
+        </span>
+      ),
+    },
+    {
+      key: 'state',
+      label: 'State',
+      sortable: true,
+      render: (v) => <StatusBadge state={v} />,
+    },
+    { key: 'image', label: 'Image', sortable: true },
+    { key: 'status', label: 'Status', sortable: true },
+    {
+      key: 'ports',
+      label: 'Ports',
+      sortable: false,
+      render: (ports) => renderPorts(ports),
+    },
+  ];
+
+  const stateOptions = [
+    {
+      value: 'all',
+      label: 'All',
+      count: containers.length,
+    },
+    {
+      value: 'running',
+      label: 'Running',
+      count: containers.filter((c) => c.state === 'running').length,
+    },
+    {
+      value: 'stopped',
+      label: 'Stopped',
+      count: containers.filter(
+        (c) => c.state === 'exited' || c.state === 'stopped',
+      ).length,
+    },
+    {
+      value: 'paused',
+      label: 'Paused',
+      count: containers.filter((c) => c.state === 'paused').length,
+    },
+  ];
 
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
@@ -61,10 +179,22 @@ export default function Containers({ navigate }) {
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}
 
+      <FilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search containers..."
+        stateFilter={stateFilter}
+        onStateFilterChange={setStateFilter}
+        stateOptions={stateOptions}
+        filteredCount={filtered.length}
+        totalCount={containers.length}
+      />
+
       <ListToolbar
         selected={selected}
         total={containers.length}
         onClear={clear}
+        filteredIds={filteredIds}
         actions={[
           { label: '▶ Start', onClick: () => handleAction('start'), disabled: !hasStopped },
           { label: '⏹ Stop', onClick: () => handleAction('stop'), disabled: !hasRunning },
@@ -73,57 +203,17 @@ export default function Containers({ navigate }) {
         ]}
       />
 
-      {containers.length === 0 ? (
-        <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No containers</div>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: '32px' }}></th>
-              <th>Name</th>
-              <th>Image</th>
-              <th>State</th>
-              <th>Status</th>
-              <th>Ports</th>
-            </tr>
-          </thead>
-          <tbody>
-            {containers.map((row) => {
-              const isSel = selected.has(row.id);
-              const name = (row.name || '').replace(/^\//, '');
-              return (
-                <tr key={row.id}
-                  onClick={() => navigate('containerDetail', { id: row.id, name: row.name })}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isSel}
-                      onChange={() => toggle(row)}
-                      style={{ width: '14px', height: '14px' }}
-                    />
-                  </td>
-                  <td style={{ fontWeight: 500, color: 'var(--accent)' }}>{name}</td>
-                  <td className="mono" style={{ fontSize: '0.8rem' }}>{row.image}</td>
-                  <td><StatusBadge state={row.state} /></td>
-                  <td className="text-secondary" style={{ fontSize: '0.8rem' }}>{row.status}</td>
-                  <td>
-                    {row.ports && Array.isArray(row.ports) && row.ports.length > 0
-                      ? row.ports.map((p, i) => (
-                          <span key={i} className="mono" style={{ fontSize: '0.7rem', marginRight: '6px' }}>
-                            {p.publicPort ? `${p.publicPort}:${p.privatePort}` : p.privatePort}
-                          </span>
-                        ))
-                      : <span className="text-secondary">—</span>
-                    }
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+      <SortableTable
+        data={filtered}
+        columns={columns}
+        keyField="id"
+        onRowClick={(row) => navigate('containerDetail', { id: row.id, name: row.name })}
+        selected={selected}
+        onToggle={toggle}
+        onToggleAll={toggleAll}
+        allSelected={allFilteredSelected || false}
+        emptyMessage="No containers"
+      />
     </div>
   );
 }
