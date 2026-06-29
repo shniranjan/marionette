@@ -90,26 +90,9 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────┐
-│              Marionette Container         │
-│                                           │
-│  :8000  →  HTTP redirect (301 → :8443)   │
-│  :8443  →  Fastify gateway (TLS)         │
-│             ├─ /api/* → Rust core :9119  │
-│             └─ /*     → React SPA        │
-│                                           │
-│  :9119  →  Rust/Axum core                │
-│             ├─ EndpointRegistry (SQLite)  │
-│             ├─ Bollard Docker clients     │
-│             └─ WebSocket (logs, stats)    │
-│                                           │
-│  Nginx   →  LB upstream configs          │
-│  SQLite  →  /data/marionette.db          │
-└──────────────────────────────────────────┘
-```
+**Tech Stack:** Rust + Node.js + React + SQLite
 
-**Tech Stack:** Rust (Axum + Bollard) + Node.js (Fastify) + React (Vite) + SQLite + Pico CSS
+Marionette is a self-contained Docker container with three coordinated processes: a Rust backend for Docker operations, a TypeScript gateway for auth and API routing, and a React SPA frontend. All state is persisted in SQLite.
 
 Marionette manages containers and writes route config. AuxGate (separate container) reads config and proxies traffic. Zero runtime coupling — Marionette can be down, AuxGate still routes. AuxGate can be deployed standalone without Marionette.
 
