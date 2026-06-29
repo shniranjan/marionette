@@ -135,6 +135,17 @@ pub struct PlanRequest {
     pub container_id: String,
     #[serde(default = "default_transfer_method")]
     pub transfer_method: String,
+    // Wave 1: New strategy fields
+    #[serde(default)]
+    pub compression: String,
+    #[serde(default)]
+    pub post_options: PostOptions,
+    #[serde(default)]
+    pub volume_overrides: HashMap<String, VolumeOverride>,
+    #[serde(default)]
+    pub connection_resolutions: HashMap<String, ConnectionResolution>,
+    #[serde(default)]
+    pub target_stack_name: Option<String>,
 }
 
 fn default_transfer_method() -> String {
@@ -282,6 +293,10 @@ async fn build_migration_plan(
                         transfer_method: vol_transfer_method,
                         default_transfer_method: default_method,
                         options: vol_opts.clone(),
+                        target_name: None,
+                        target_path: None,
+                        target_driver: None,
+                        skip: false,
                     });
                 }
             } else if mount_type == "bind" {
@@ -489,6 +504,9 @@ async fn build_migration_plan(
         has_compose_secrets,
         start_on_target: true,
         verify_connectivity: true,
+        compression: String::new(),
+        post_options: None,
+        volume_overrides: None,
     })
 }
 

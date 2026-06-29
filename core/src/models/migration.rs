@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +20,13 @@ pub struct MigrationPlan {
     pub has_compose_secrets: bool,
     pub start_on_target: bool,
     pub verify_connectivity: bool,
+    // Wave 1: Strategy fields
+    #[serde(default)]
+    pub compression: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_options: Option<PostOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_overrides: Option<HashMap<String, VolumeOverride>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +40,15 @@ pub struct MigrationVolume {
     pub transfer_method: String,
     pub default_transfer_method: String,
     pub options: Option<serde_json::Value>,
+    // Wave 1: Volume target management fields
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_path: Option<String>,
+    #[serde(default)]
+    pub target_driver: Option<String>,
+    #[serde(default)]
+    pub skip: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,4 +71,46 @@ pub struct CommandExecutionResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+// ── Wave 1: Strategy structs ──────────────────────────────────────
+
+/// Post-migration options set by the user in the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PostOptions {
+    #[serde(default)]
+    pub start_on_target: bool,
+    #[serde(default)]
+    pub verify_connectivity: bool,
+    #[serde(default)]
+    pub remove_from_source: bool,
+    #[serde(default)]
+    pub rotate_credentials: bool,
+}
+
+/// Per-volume override for transfer settings.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeOverride {
+    #[serde(default)]
+    pub transfer_method: Option<String>,
+    #[serde(default)]
+    pub custom_path: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_path: Option<String>,
+    #[serde(default)]
+    pub target_driver: Option<String>,
+    #[serde(default)]
+    pub skip: bool,
+}
+
+/// Resolution for a DB connection that would break during migration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionResolution {
+    pub action: String,
+    pub resolved: bool,
 }
