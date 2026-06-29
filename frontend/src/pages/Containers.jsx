@@ -25,7 +25,7 @@ export default function Containers({ navigate }) {
 
   const load = useCallback(async () => {
     try {
-      const data = await api.get('/api/containers');
+      const data = await api.get('/api/containers?includeHealth=true');
       let items = Array.isArray(data) ? data : (data?.containers || []);
       // Normalize PascalCase to camelCase
       items = items.map((c) => ({
@@ -35,6 +35,7 @@ export default function Containers({ navigate }) {
         state: c.state || c.State || '',
         status: c.status || c.Status || '',
         ports: c.ports || c.Ports || [],
+        health: c.health || null,
       }));
       setContainers(items);
       setError(null);
@@ -109,6 +110,35 @@ export default function Containers({ navigate }) {
     load();
   };
 
+  // ── Bulk "All" actions ────────────────────────────────────────
+  const anyStopped = containers.some(
+    (c) => c.state === 'exited' || c.state === 'stopped',
+  );
+  const anyRunning = containers.some((c) => c.state === 'running');
+
+  const handleBatchAction = async (action) => {
+    const allIds = containers.map((c) => c.id);
+    if (allIds.length === 0) return;
+    if (action !== 'start') {
+      if (!confirm(`Are you sure you want to ${action} ALL ${allIds.length} containers?`)) return;
+    }
+    try {
+      const result = await api.post('/api/containers/batch', {
+        action,
+        containerIds: allIds,
+      });
+      const s = result.success?.length || 0;
+      const f = result.failed?.length || 0;
+      const verb = action === 'start' ? 'Started' : action === 'stop' ? 'Stopped' : 'Restarted';
+      let msg = `${verb} ${s} container${s !== 1 ? 's' : ''}`;
+      if (f > 0) msg += `, ${f} failed`;
+      alert(msg);
+      load();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
   const columns = [
     {
       key: 'name',
@@ -135,6 +165,12 @@ export default function Containers({ navigate }) {
     },
     { key: 'image', label: 'Image', sortable: true },
     { key: 'status', label: 'Status', sortable: true },
+    {
+      key: 'health',
+      label: 'Health',
+      sortable: true,
+      render: (v) => v ? <StatusBadge health={v} /> : '\u2014',
+    },
     {
       key: 'ports',
       label: 'Ports',
@@ -174,7 +210,24 @@ export default function Containers({ navigate }) {
     <div>
       <div className="section-header">
         <h1>Containers ({containers.length})</h1>
-        <button onClick={load}>🔄 Refresh</button>
+        <div className="section-header-actions">
+          {anyStopped && (
+            <button onClick={() => handleBatchAction('start')} title="Start all stopped containers">
+              ▶ Start All
+            </button>
+          )}
+          {anyRunning && (
+            <button onClick={() => handleBatchAction('stop')} title="Stop all running containers">
+              ⏹ Stop All
+            </button>
+          )}
+          {anyRunning && (
+            <button onClick={() => handleBatchAction('restart')} title="Restart all running containers">
+              🔄 Restart All
+            </button>
+          )}
+          <button onClick={load}>🔄 Refresh</button>
+        </div>
       </div>
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}

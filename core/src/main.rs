@@ -103,7 +103,9 @@ async fn main() {
         .route("/containers/{id}", delete(routes::containers::remove_container))
         .route("/containers/{id}/rename", post(routes::containers::rename_container))
         .route("/containers/{id}/logs", get(ws::logs::container_logs_ws))
+        .route("/containers/{id}/logs/download", get(ws::logs::download_logs))
         .route("/containers/{id}/stats", get(ws::stats::container_stats_ws))
+        .route("/containers/batch", post(routes::containers::batch_containers))
         // Images
         .route("/images", get(routes::images::list_images))
         .route("/images/{id}", get(routes::images::inspect_image))
@@ -133,6 +135,8 @@ async fn main() {
         .route("/stacks/{name}/deploy", post(routes::stacks::deploy_stack))
         .route("/stacks/{name}/stop", post(routes::stacks::stop_stack))
         .route("/stacks/{name}/down", post(routes::stacks::down_stack))
+        .route("/stacks/{name}/env", get(routes::stacks::get_stack_env))
+        .route("/stacks/{name}/env", put(routes::stacks::save_stack_env))
         .route("/stacks/{name}/deploy/stream", get(ws::deploy::deploy_stream_ws))
         // System
         .route("/system", get(routes::system::system_info))

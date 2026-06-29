@@ -13,6 +13,8 @@ pub struct ContainerSummary {
     pub ports: Vec<PortMapping>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -7,9 +7,33 @@ import {
 
 const MAX_POINTS = 60;
 
+const LS_KEY = 'marionette_stats_thresholds';
+
+function loadThresholds() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        cpu: typeof parsed.cpu === 'number' ? parsed.cpu : 80,
+        mem: typeof parsed.mem === 'number' ? parsed.mem : 90,
+      };
+    }
+  } catch { /* ignore */ }
+  return { cpu: 80, mem: 90 };
+}
+
+function saveThresholds(t) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(t));
+  } catch { /* ignore */ }
+}
+
 export default function StatsPanel({ containerId }) {
   const [history, setHistory] = useState([]);
   const [connected, setConnected] = useState(false);
+  const [thresholds, setThresholds] = useState(loadThresholds);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const wsRef = useRef(null);
   const prevNetRef = useRef(null); // for rate calculation
 
@@ -90,6 +114,14 @@ export default function StatsPanel({ containerId }) {
   }, [containerId]);
 
   const latest = history.length > 0 ? history[history.length - 1] : null;
+  const cpuAlert = latest && latest.cpu >= thresholds.cpu;
+  const memAlert = latest && latest.memPct >= thresholds.mem;
+
+  const handleThresholdChange = (key, value) => {
+    const next = { ...thresholds, [key]: Number(value) };
+    setThresholds(next);
+    saveThresholds(next);
+  };
 
   if (!connected && history.length === 0) {
     return <div style={{ color: 'var(--pico-muted-color)', textAlign: 'center', padding: '48px' }}>
@@ -105,15 +137,15 @@ export default function StatsPanel({ containerId }) {
   const chartTheme = {
     grid: 'var(--card-border)',
     text: 'var(--pico-muted-color, #8b949e)',
-    cpu: 'var(--accent, #58a6ff)',
-    mem: 'var(--green, #3fb950)',
+    cpu: cpuAlert ? 'var(--red, #f85149)' : 'var(--accent, #58a6ff)',
+    mem: memAlert ? 'var(--red, #f85149)' : 'var(--green, #3fb950)',
     rx: 'var(--accent, #58a6ff)',
     tx: 'var(--green, #3fb950)',
   };
 
   return (
     <div>
-      {/* Connection indicator */}
+      {/* Connection indicator + thresholds gear */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: '8px',
         marginBottom: '16px', padding: '4px 0',
@@ -130,13 +162,101 @@ export default function StatsPanel({ containerId }) {
             CPU: {latest.cpu}% &nbsp; Mem: {latest.memPct}%
           </span>
         )}
+        <button
+          className="btn-sm"
+          onClick={() => setSettingsOpen(o => !o)}
+          title="Alert thresholds"
+          style={{
+            background: 'transparent', border: '1px solid var(--card-border)',
+            borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem',
+            color: 'var(--pico-muted-color)', padding: '2px 6px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          aria-label="Threshold settings"
+        >
+          &#9881;
+        </button>
+        {(cpuAlert || memAlert) && (
+          <span style={{
+            fontSize: '0.65rem', fontWeight: 600, borderRadius: '4px',
+            padding: '2px 6px', background: 'var(--red)', color: '#fff',
+          }}>
+            ALERT
+          </span>
+        )}
       </div>
+
+      {/* Threshold settings panel */}
+      {settingsOpen && (
+        <div style={{
+          background: 'var(--card-bg)',
+          border: '1px solid var(--card-border)',
+          borderRadius: '8px', padding: '12px 16px',
+          marginBottom: '16px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Alert Thresholds</span>
+            <button
+              onClick={() => setSettingsOpen(false)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--pico-muted-color)', fontSize: '1rem', lineHeight: 1,
+              }}
+              aria-label="Close settings"
+            >
+              &times;
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+            {/* CPU threshold */}
+            <div>
+              <label style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)', display: 'block', marginBottom: '4px' }}>
+                CPU Threshold: <strong>{thresholds.cpu}%</strong>
+              </label>
+              <input
+                type="range"
+                min="0" max="100"
+                value={thresholds.cpu}
+                onChange={e => handleThresholdChange('cpu', e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+            {/* Memory threshold */}
+            <div>
+              <label style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)', display: 'block', marginBottom: '4px' }}>
+                Memory Threshold: <strong>{thresholds.mem}%</strong>
+              </label>
+              <input
+                type="range"
+                min="0" max="100"
+                value={thresholds.mem}
+                onChange={e => handleThresholdChange('mem', e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--pico-muted-color)', marginTop: '8px' }}>
+            When usage crosses the threshold, the chart line turns red and an alert badge appears.
+          </div>
+        </div>
+      )}
 
       {/* Charts grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px', marginBottom: '16px' }}>
         {/* CPU Chart */}
-        <div className="card">
-          <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>CPU %</h3>
+        <div className="card" style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>CPU %</h3>
+            {cpuAlert && (
+              <span style={{
+                fontSize: '0.6rem', fontWeight: 700, borderRadius: '3px',
+                padding: '1px 5px', background: 'var(--red)', color: '#fff',
+                textTransform: 'uppercase', letterSpacing: '0.5px',
+              }}>
+                &ge;{thresholds.cpu}%
+              </span>
+            )}
+          </div>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={history} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
               <defs>
@@ -155,8 +275,19 @@ export default function StatsPanel({ containerId }) {
         </div>
 
         {/* Memory Chart */}
-        <div className="card">
-          <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>Memory</h3>
+        <div className="card" style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--pico-muted-color)' }}>Memory</h3>
+            {memAlert && (
+              <span style={{
+                fontSize: '0.6rem', fontWeight: 700, borderRadius: '3px',
+                padding: '1px 5px', background: 'var(--red)', color: '#fff',
+                textTransform: 'uppercase', letterSpacing: '0.5px',
+              }}>
+                &ge;{thresholds.mem}%
+              </span>
+            )}
+          </div>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={history} margin={{ top: 4, right: 4, left: -8, bottom: 0 }}>
               <defs>

@@ -52,6 +52,10 @@ export default function Stacks() {
   const [editYml, setEditYml] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
+  // ── Env editor state ────────────────────────────────────────
+  const [envVars, setEnvVars] = useState([]);       // [{key, value}, ...]
+  const [showEnv, setShowEnv] = useState(false);
+
   const load = useCallback(async () => {
     try {
       const data = await api.get('/api/stacks');
@@ -107,6 +111,15 @@ export default function Stacks() {
     try {
       const data = await api.get(`/api/stacks/${name}`);
       setEditYml(data.content || '');
+      // Load env vars
+      try {
+        const envData = await api.get(`/api/stacks/${name}/env`);
+        const vars = envData.variables || {};
+        setEnvVars(Object.entries(vars).map(([key, value]) => ({ key, value })));
+      } catch {
+        setEnvVars([]);
+      }
+      setShowEnv(false);
       setShowEdit(name);
     } catch (err) {
       alert('Error: ' + err.message);
@@ -118,6 +131,10 @@ export default function Stacks() {
     setEditSaving(true);
     try {
       await api.put(`/api/stacks/${showEdit}`, { content: editYml });
+      // Save env vars
+      const varObj = {};
+      envVars.forEach(({ key, value }) => { if (key.trim()) varObj[key.trim()] = value; });
+      await api.put(`/api/stacks/${showEdit}/env`, { variables: varObj });
       setShowEdit(null);
       load();
       if (deployAfter) {
@@ -293,6 +310,79 @@ export default function Stacks() {
           }
         >
           <YamlEditor value={editYml} onChange={setEditYml} fill />
+
+          {/* Env editor */}
+          <details open={showEnv} onToggle={(e) => setShowEnv(e.target.open)} style={{ marginTop: '20px' }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.95rem', padding: '4px 0' }}>
+              🔧 Environment Variables ({envVars.length})
+            </summary>
+            <div style={{ marginTop: '12px' }}>
+              <table role="grid" style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: '35%' }}>Key</th>
+                    <th style={{ width: '50%' }}>Value</th>
+                    <th style={{ width: '15%' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {envVars.map((row, i) => (
+                    <tr key={i}>
+                      <td>
+                        <input
+                          type="text"
+                          value={row.key}
+                          onChange={(e) => {
+                            const next = [...envVars];
+                            next[i] = { ...next[i], key: e.target.value };
+                            setEnvVars(next);
+                          }}
+                          placeholder="KEY"
+                          style={{ width: '100%', boxSizing: 'border-box' }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={row.value}
+                          onChange={(e) => {
+                            const next = [...envVars];
+                            next[i] = { ...next[i], value: e.target.value };
+                            setEnvVars(next);
+                          }}
+                          placeholder="value"
+                          style={{ width: '100%', boxSizing: 'border-box' }}
+                        />
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="btn-sm btn-danger"
+                          onClick={() => setEnvVars(envVars.filter((_, j) => j !== i))}
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {envVars.length === 0 && (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: '#888', padding: '16px' }}>
+                        No environment variables set.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <button
+                className="btn-sm"
+                onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
+                style={{ marginTop: '8px' }}
+              >
+                + Add Variable
+              </button>
+            </div>
+          </details>
         </Modal>
       )}
     </div>
