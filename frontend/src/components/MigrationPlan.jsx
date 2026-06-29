@@ -18,8 +18,8 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
   const [transferMethod, setTransferMethod] = useState(plan.transferMethod || 'rsync-over-ssh');
   const [compression, setCompression] = useState(plan.compression || 'pigz');
   const [postOptions, setPostOptions] = useState({
-    startOnTarget: plan.start_on_target !== false,
-    verifyConnectivity: plan.verify_connectivity !== false,
+    startOnTarget: plan.startOnTarget !== false,
+    verifyConnectivity: plan.verifyConnectivity !== false,
     removeFromSource: false,
     rotateCredentials: false,
   });

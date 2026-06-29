@@ -441,6 +441,11 @@ async fn build_migration_plan(
         }
     }
 
+    // Detect compose secret references
+    let has_compose_secrets = env_vars.iter().any(|e| {
+        e.contains("${") || e.to_uppercase().contains("DOCKER-SECRET") || e.contains("/run/secrets")
+    });
+
     Ok(MigrationPlan {
         migration_id,
         source_endpoint: source_endpoint_id.to_string(),
@@ -454,6 +459,10 @@ async fn build_migration_plan(
         warnings,
         estimated_size_bytes,
         compressed: true,
+        env_vars,
+        has_compose_secrets,
+        start_on_target: true,
+        verify_connectivity: true,
     })
 }
 

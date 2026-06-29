@@ -282,7 +282,7 @@ export default function Migration({ navigate }) {
     setTargetInfo(null);
     if (!epId) return;
     try {
-      const data = await api.get(`/api/endpoints/${epId}`);
+      const data = await api.get(`/api/endpoints/${epId}/info`);
       setTargetInfo(data);
     } catch {/* ignore */}
   };
@@ -713,9 +713,9 @@ export default function Migration({ navigate }) {
 
       // ── STEP 4: Credentials Review ──
       case 4: {
-        const envVars = analysis?.env_vars || [];
+        const envVars = analysis?.envVars || [];
         const volOpts = (analysis?.volumes || []).filter(v => v.options && Object.keys(v.options).length > 0);
-        const hasComposeSecrets = analysis?.has_compose_secrets;
+        const hasComposeSecrets = analysis?.hasComposeSecrets;
         return (
           <div style={{ display: 'grid', gap: '16px' }}>
             <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
@@ -870,13 +870,13 @@ export default function Migration({ navigate }) {
                         {targetInfo.status || 'unknown'}
                       </span>
                     </td></tr>
-                    <tr><td style={{ color: 'var(--text-secondary)' }}>Docker Version</td><td className="mono">{targetInfo.docker_version || '—'}</td></tr>
-                    <tr><td style={{ color: 'var(--text-secondary)' }}>Containers</td><td>{targetInfo.container_count ?? '—'}</td></tr>
-                    {targetInfo.disk_free_bytes != null && (
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Disk Free</td><td className="mono">{(targetInfo.disk_free_bytes / 1073741824).toFixed(1)} GB</td></tr>
+                    <tr><td style={{ color: 'var(--text-secondary)' }}>Docker Version</td><td className="mono">{targetInfo.dockerVersion || '—'}</td></tr>
+                    <tr><td style={{ color: 'var(--text-secondary)' }}>Containers</td><td>{targetInfo.containerCount ?? '—'}</td></tr>
+                    {targetInfo.diskFreeBytes != null && (
+                      <tr><td style={{ color: 'var(--text-secondary)' }}>Disk Free</td><td className="mono">{(targetInfo.diskFreeBytes / 1073741824).toFixed(1)} GB</td></tr>
                     )}
-                    {targetInfo.disk_total_bytes != null && (
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Disk Total</td><td className="mono">{(targetInfo.disk_total_bytes / 1073741824).toFixed(1)} GB</td></tr>
+                    {targetInfo.diskTotalBytes != null && (
+                      <tr><td style={{ color: 'var(--text-secondary)' }}>Disk Total</td><td className="mono">{(targetInfo.diskTotalBytes / 1073741824).toFixed(1)} GB</td></tr>
                     )}
                   </tbody>
                 </table>

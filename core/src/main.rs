@@ -187,6 +187,7 @@ async fn main() {
         .route("/endpoints/{id}", delete(endpoints::delete_endpoint))
         .route("/endpoints/{id}/test", post(endpoints::test_endpoint))
         .route("/endpoints/{id}/reconnect", post(endpoints::reconnect_endpoint))
+        .route("/endpoints/{id}/info", get(endpoints::endpoint_info))
         // Routes (AuxGate config)
         .route("/routes", get(routes_config::list_routes))
         .route("/routes", post(routes_config::create_route))

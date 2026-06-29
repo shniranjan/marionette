@@ -15,6 +15,10 @@ pub struct MigrationPlan {
     pub warnings: Vec<String>,
     pub estimated_size_bytes: u64,
     pub compressed: bool,
+    pub env_vars: Vec<String>,
+    pub has_compose_secrets: bool,
+    pub start_on_target: bool,
+    pub verify_connectivity: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
