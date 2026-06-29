@@ -8,7 +8,7 @@ use futures::stream::StreamExt;
 use futures::SinkExt;
 use std::sync::Arc;
 
-use crate::docker::get_client;
+use crate::helpers;
 use crate::models::EndpointQuery;
 
 /// GET /containers/:id/logs?endpoint=local (WebSocket upgrade)
@@ -28,18 +28,15 @@ async fn handle_logs_stream(
     container_id: String,
     params: EndpointQuery,
 ) {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let docker = {
-        let clients = state.clients.read().await;
-        match get_client(&endpoint_id, &clients).await {
+        match helpers::resolve_client(&state, Some(&endpoint_id)).await {
             Ok(d) => d,
-            Err(e) => {
+            Err((_, json)) => {
                 let _ = socket
                     .send(Message::Text(
-                        serde_json::json!({"error": e}).to_string().into(),
+                        json.to_string().into(),
                     ))
                     .await;
                 let _ = socket.close().await;

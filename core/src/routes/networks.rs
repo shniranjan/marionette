@@ -9,7 +9,7 @@ use bollard::network::{
 };
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -24,14 +24,7 @@ pub async fn list_networks(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<NetworkSummary>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let networks = docker
         .list_networks::<String>(Some(ListNetworksOptions {
@@ -72,14 +65,7 @@ pub async fn inspect_network(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<NetworkSummary> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     // Bollard 0.17: inspect_network takes 2 args: &id, Option<InspectNetworkOptions<T>>
     let net = docker
@@ -112,14 +98,7 @@ pub async fn create_network(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<NetworkCreateRequest>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let resp = docker
         .create_network(CreateNetworkOptions {
@@ -146,14 +125,7 @@ pub async fn remove_network(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     // Bollard 0.17: remove_network takes just &id (no options)
     docker
@@ -172,14 +144,7 @@ pub async fn connect_to_network(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<NetworkConnectRequest>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .connect_network(
@@ -207,14 +172,7 @@ pub async fn disconnect_from_network(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<NetworkConnectRequest>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .disconnect_network(
@@ -240,14 +198,7 @@ pub async fn prune_networks(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     // Bollard 0.17: prune_networks takes Option<PruneNetworksOptions<T>>
     let result = docker

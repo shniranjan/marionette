@@ -10,6 +10,7 @@ use bollard::container::{
 use std::sync::Arc;
 
 use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -25,16 +26,8 @@ pub async fn deep_inspect_volume(
     Path(name): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<VolumeDeepInspection> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-
-    // Get client for volume inspection
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     // Inspect the volume
     let vol_info = docker
@@ -51,11 +44,7 @@ pub async fn deep_inspect_volume(
     let mountpoint = vol_info.mountpoint.clone();
 
     // Find containers using this volume
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     let containers = docker
         .list_containers::<String>(Some(ListContainersOptions {

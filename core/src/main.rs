@@ -6,8 +6,9 @@ mod compose;
 mod migration;
 mod routes;
 mod ws;
+mod registry;
+mod helpers;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,15 +16,12 @@ use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
-use tokio::sync::RwLock;
-use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-use bollard::Docker;
 use docker::build_initial_endpoints;
-use models::DockerEndpoint;
 use audit::AuditLog;
 use db::Database;
+use registry::EndpointRegistry;
 
 use crate::routes::endpoints;
 use crate::routes::nginx;
@@ -33,10 +31,7 @@ use crate::routes::users;
 
 /// Shared application state.
 pub struct AppState {
-    pub endpoints: RwLock<HashMap<String, DockerEndpoint>>,
-    pub clients: RwLock<HashMap<String, Docker>>,
-    pub default_endpoint: String,
-    pub db: Database,
+    pub registry: Arc<EndpointRegistry>,
     pub audit_log: AuditLog,
     pub stacks_dir: PathBuf,
 }
@@ -52,66 +47,45 @@ async fn main() {
 
     tracing::info!("marionette-core starting...");
 
-    // Docker endpoints
-    let (endpoints, clients, default_endpoint) = build_initial_endpoints().await;
-    tracing::info!(
-        "Initialized {} Docker endpoint(s), default: {}",
-        endpoints.len(),
-        default_endpoint
-    );
-
     // Stacks directory
     let stacks_dir = std::env::var("MARIONETTE_STACKS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/stacks"));
     std::fs::create_dir_all(&stacks_dir).ok();
 
-    // Audit log database
+    // Database
     let db_path = std::env::var("MARIONETTE_DB_PATH")
         .unwrap_or_else(|_| "/data/marionette.db".to_string());
     tracing::info!("Audit log database: {}", db_path);
 
+    let db = Database::new(&db_path);
+    let audit_log = AuditLog::new(&db_path);
+
+    // Endpoint registry — single source of truth for endpoints + clients
+    let (_, _, fresh_default_id) = build_initial_endpoints().await;
+    let registry = EndpointRegistry::new(db, fresh_default_id);
+    let endpoints = registry.init().await;
+    tracing::info!("Registry initialized with {} endpoint(s)", endpoints.len());
+
     // Application state
     let state = Arc::new(AppState {
-        endpoints: RwLock::new(HashMap::new()),
-        clients: RwLock::new(clients),
-        default_endpoint: default_endpoint.clone(),
-        db: Database::new(&db_path),
-        audit_log: AuditLog::new(&db_path),
+        registry: registry.clone(),
+        audit_log,
         stacks_dir,
     });
 
-    // Migrate: load endpoints from DB, or seed from in-memory if first run
-    {
-        let db_endpoints = state.db.load_endpoints();
-        let mut ep_map = state.endpoints.write().await;
-        if db_endpoints.is_empty() {
-            // First run — seed DB from the initial endpoints we just created
-            let initial: Vec<DockerEndpoint> = endpoints.values().cloned().collect();
-            state.db.seed_endpoints(&initial);
-            *ep_map = endpoints;
-            tracing::info!("Seeded endpoints from initial discovery");
-        } else {
-            // Restore from DB
-            for ep in db_endpoints {
-                ep_map.insert(ep.id.clone(), ep);
-            }
-            tracing::info!("Restored {} endpoint(s) from database", ep_map.len());
-        }
-    }
-
-    // Ensure at least one admin user exists (from MARIONETTE_KEY or default)
+    // Ensure at least one admin user exists
     {
         let admin_key = std::env::var("MARIONETTE_KEY")
             .unwrap_or_else(|_| "admin".to_string());
-        state.db.ensure_admin_user(&admin_key);
+        state.registry.db().ensure_admin_user(&admin_key);
     }
 
-    // CORS — allow all origins (auth is handled by the gateway)
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // CORS
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
 
     // Router
     let app = Router::new()

@@ -3,8 +3,8 @@ import cors from '@fastify/cors';
 import fastifyHttpProxy from '@fastify/http-proxy';
 import fastifyStatic from '@fastify/static';
 import { readFileSync, existsSync } from 'fs';
-import https from 'https';
 import http from 'http';
+import https from 'https';
 import { resolve } from 'path';
 
 import { createAuthHook } from './auth';
@@ -16,6 +16,7 @@ import {
 } from './proxy';
 
 const PORT = parseInt(process.env.PORT || '8000', 10);
+const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '8443', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const TLS_KEY = process.env.TLS_KEY || '';
 const TLS_CERT = process.env.TLS_CERT || '';
@@ -89,19 +90,26 @@ async function main() {
   // --- Start ---
   try {
     if (TLS_ENABLED) {
-      // HTTPS app on internal port; HTTP redirect on public port 8000
-      const APP_PORT = 8443;
-      await server.listen({ port: APP_PORT, host: HOST });
-      server.log.info(`Gateway (HTTPS) listening on ${HOST}:${APP_PORT}`);
+      // Fastify HTTPS app on HTTPS_PORT
+      await server.listen({ port: HTTPS_PORT, host: HOST });
 
-      // HTTP → HTTPS redirect server on port 8000
+      // HTTP redirect server on PORT — 301 to HTTPS
+      const redirectHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
       http.createServer((req, res) => {
-        const host = (req.headers.host || HOST).replace(/:8000$/, '');
-        res.writeHead(301, { Location: `https://${host}:${PORT}${req.url}` });
+        const host = req.headers.host || redirectHost;
+        // Strip port from host header (e.g., "localhost:8000" → "localhost")
+        const hostname = host.split(':')[0];
+        const path = req.url || '/';
+        res.writeHead(301, {
+          Location: `https://${hostname}:${HTTPS_PORT}${path}`,
+          Connection: 'close',
+        });
         res.end();
       }).listen(PORT, HOST, () => {
-        server.log.info(`HTTP→HTTPS redirect on ${HOST}:${PORT}`);
+        server.log.info(`HTTP→HTTPS redirect listening on ${HOST}:${PORT}`);
       });
+
+      server.log.info(`Gateway (HTTPS) listening on ${HOST}:${HTTPS_PORT}`);
     } else {
       await server.listen({ port: PORT, host: HOST });
       server.log.info(`Gateway (HTTP) listening on ${HOST}:${PORT}`);

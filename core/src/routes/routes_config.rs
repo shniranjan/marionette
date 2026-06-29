@@ -19,7 +19,7 @@ fn error(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 pub async fn list_routes(
     State(state): State<Arc<crate::AppState>>,
 ) -> ApiResult<Vec<Route>> {
-    Ok(Json(state.db.list_routes()))
+    Ok(Json(state.registry.db().list_routes()))
 }
 
 // ── Create Route ──────────────────────────────────────────────
@@ -46,7 +46,7 @@ pub async fn create_route(
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    state.db.upsert_route(&route);
+    state.registry.db().upsert_route(&route);
 
     Ok(Json(route))
 }
@@ -58,7 +58,7 @@ pub async fn get_route(
     Path(id): Path<String>,
 ) -> ApiResult<Route> {
     state
-        .db
+        .registry.db()
         .get_route(&id)
         .map(Json)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Route '{}' not found", id)))
@@ -72,7 +72,7 @@ pub async fn update_route(
     Json(body): Json<RouteUpdateRequest>,
 ) -> ApiResult<Route> {
     let mut route = state
-        .db
+        .registry.db()
         .get_route(&id)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Route '{}' not found", id)))?;
 
@@ -101,7 +101,7 @@ pub async fn update_route(
         route.active = active;
     }
 
-    state.db.upsert_route(&route);
+    state.registry.db().upsert_route(&route);
 
     Ok(Json(route))
 }
@@ -112,14 +112,14 @@ pub async fn delete_route(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    if state.db.get_route(&id).is_none() {
+    if state.registry.db().get_route(&id).is_none() {
         return Err(error(
             StatusCode::NOT_FOUND,
             &format!("Route '{}' not found", id),
         ));
     }
 
-    state.db.delete_route(&id);
+    state.registry.db().delete_route(&id);
 
     Ok(Json(serde_json::json!({"status": "deleted", "id": id})))
 }
@@ -132,11 +132,11 @@ pub async fn list_route_access(
 ) -> ApiResult<Vec<String>> {
     // Verify route exists
     state
-        .db
+        .registry.db()
         .get_route(&id)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Route '{}' not found", id)))?;
 
-    Ok(Json(state.db.list_route_access(&id)))
+    Ok(Json(state.registry.db().list_route_access(&id)))
 }
 
 // ── Grant Route Access ────────────────────────────────────────
@@ -148,11 +148,11 @@ pub async fn grant_route_access(
 ) -> ApiResult<serde_json::Value> {
     // Verify route exists
     state
-        .db
+        .registry.db()
         .get_route(&id)
         .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Route '{}' not found", id)))?;
 
-    state.db.grant_route_access(&id, &body.user_id);
+    state.registry.db().grant_route_access(&id, &body.user_id);
 
     Ok(Json(serde_json::json!({"status": "granted", "route_id": id, "user_id": body.user_id})))
 }
@@ -163,7 +163,7 @@ pub async fn revoke_route_access(
     State(state): State<Arc<crate::AppState>>,
     Path((id, user_id)): Path<(String, String)>,
 ) -> ApiResult<serde_json::Value> {
-    state.db.revoke_route_access(&id, &user_id);
+    state.registry.db().revoke_route_access(&id, &user_id);
 
     Ok(Json(serde_json::json!({"status": "revoked", "route_id": id, "user_id": user_id})))
 }

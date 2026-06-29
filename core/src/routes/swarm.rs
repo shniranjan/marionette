@@ -19,7 +19,7 @@ use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -41,12 +41,10 @@ enum RawClient {
 }
 
 async fn raw_client(state: &Arc<crate::AppState>, endpoint_id: &str) -> Result<(RawClient, String), String> {
-    let endpoints = state.endpoints.read().await;
-    let connection = endpoints
-        .get(endpoint_id)
-        .map(|e| e.connection.clone())
+    let endpoint = state.registry.get(endpoint_id)
+        .await
         .ok_or_else(|| format!("Endpoint not found: {}", endpoint_id))?;
-    drop(endpoints);
+    let connection = endpoint.connection;
 
     if connection.starts_with("unix://") {
         #[cfg(unix)]
@@ -219,9 +217,7 @@ pub async fn swarm_init(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<SwarmInitBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let mut payload = serde_json::json!({
         "ForceNewCluster": body.force_new_cluster,
@@ -258,9 +254,7 @@ pub async fn swarm_join(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<SwarmJoinBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let payload = serde_json::json!({
         "RemoteAddrs": body.remote_addrs,
@@ -285,9 +279,7 @@ pub async fn swarm_leave(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let payload = serde_json::json!({"Force": true});
 
@@ -309,9 +301,7 @@ pub async fn inspect_swarm(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let swarm = raw_get(&state, &endpoint_id, "/swarm")
         .await
@@ -326,9 +316,7 @@ pub async fn list_nodes(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let nodes = raw_get_array(&state, &endpoint_id, "/nodes")
         .await
@@ -344,9 +332,7 @@ pub async fn inspect_node(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let node = raw_get(&state, &endpoint_id, &format!("/nodes/{}", id))
         .await
@@ -374,9 +360,7 @@ pub async fn update_node(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<UpdateNodeBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let mut spec = serde_json::json!({
         "Version": { "Index": body.version },
@@ -419,9 +403,7 @@ pub async fn delete_node(
     Path(id): Path<String>,
     Query(query): Query<DeleteNodeQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = query
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, query.endpoint.as_deref()).await;
 
     let path = if query.force {
         format!("/nodes/{}?force=true", id)
@@ -447,14 +429,8 @@ pub async fn list_services(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     let services = docker
         .list_services(Some(ListServicesOptions::<String> {
@@ -478,14 +454,8 @@ pub async fn inspect_service(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     let service = docker
         .inspect_service(&id, None::<InspectServiceOptions>)
@@ -540,14 +510,8 @@ pub async fn create_service(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<CreateServiceBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     let replicas = if body.replicas > 0 { body.replicas } else { 1 };
 
@@ -655,14 +619,8 @@ pub async fn update_service(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<UpdateServiceBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     // Inspect existing service to build the update spec
     let existing = docker
@@ -764,14 +722,8 @@ pub async fn delete_service(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     docker
         .delete_service(&id)
@@ -793,9 +745,7 @@ pub async fn service_logs(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     // Get tasks for this service via raw API
     let tasks_json = raw_get_array(
@@ -814,11 +764,7 @@ pub async fn service_logs(
             .map(|s| s.to_string());
 
         if let Some(cid) = container_id {
-            let clients = state.clients.read().await;
-            let docker = get_client(&endpoint_id, &clients)
-                .await
-                .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-            drop(clients);
+            let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
             let mut stream = docker.logs(
                 &cid,
@@ -854,14 +800,8 @@ pub async fn rollback_service(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     // Get current version
     let service = docker
@@ -908,9 +848,7 @@ pub async fn list_tasks(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let tasks = raw_get_array(&state, &endpoint_id, "/tasks")
         .await
@@ -926,9 +864,7 @@ pub async fn inspect_task(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let task = raw_get(&state, &endpoint_id, &format!("/tasks/{}", id))
         .await
@@ -944,9 +880,7 @@ pub async fn task_logs(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     // Inspect the task to find the container ID via raw API
     let task = raw_get(&state, &endpoint_id, &format!("/tasks/{}", id))
@@ -959,11 +893,7 @@ pub async fn task_logs(
         .ok_or_else(|| error(StatusCode::NOT_FOUND, "No container ID found for this task"))?;
 
     // Use bollard for log streaming
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     let mut stream = docker.logs(
         &container_id,
@@ -998,14 +928,8 @@ pub async fn list_secrets(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     let secrets = docker
         .list_secrets(Some(ListSecretsOptions::<String> {
@@ -1037,14 +961,8 @@ pub async fn create_secret(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<CreateSecretBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     use base64::Engine;
 
@@ -1082,14 +1000,8 @@ pub async fn delete_secret(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let docker = helpers::resolve_client(&state, Some(&endpoint_id)).await?;
 
     docker
         .delete_secret(&id)
@@ -1110,9 +1022,7 @@ pub async fn list_configs(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<serde_json::Value>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     let configs = raw_get_array(&state, &endpoint_id, "/configs")
         .await
@@ -1136,9 +1046,7 @@ pub async fn create_config(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<CreateConfigBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     use base64::Engine;
 
@@ -1171,9 +1079,7 @@ pub async fn delete_config(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     raw_delete(&state, &endpoint_id, &format!("/configs/{}", id))
         .await

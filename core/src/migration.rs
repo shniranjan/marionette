@@ -17,7 +17,8 @@ use std::sync::OnceLock;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::docker::*;
+use crate::docker::{classify_driver, human_bytes};
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -156,11 +157,8 @@ async fn build_migration_plan(
     let migration_id = Uuid::new_v4().to_string();
 
     // Get source client
-    let clients = state.clients.read().await;
-    let source_docker = get_client(source_endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let source_docker = helpers::resolve_client(state, Some(source_endpoint_id))
+        .await?;
 
     // Inspect container
     let info = source_docker
@@ -310,21 +308,21 @@ async fn build_migration_plan(
 
     if generate_commands {
         // Read source endpoint connection for SSH target inference
-        let source_endpoints = state.endpoints.read().await;
-        let source_ep = source_endpoints.get(source_endpoint_id);
+        let source_ep = state.registry.get(source_endpoint_id).await;
         let _source_conn = source_ep
+            .as_ref()
             .map(|e| e.connection.clone())
             .unwrap_or_else(|| "unix:///var/run/docker.sock".to_string());
 
         let target_conn = if let Some(target_id) = target_endpoint_id {
-            source_endpoints
+            state.registry
                 .get(target_id)
+                .await
                 .map(|e| e.connection.clone())
                 .unwrap_or_default()
         } else {
             String::new()
         };
-        drop(source_endpoints);
 
         let has_remote_target = !same_host && !target_conn.is_empty();
 

@@ -7,7 +7,7 @@ use bollard::image::{ListImagesOptions, RemoveImageOptions};
 use futures::StreamExt;
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -22,14 +22,7 @@ pub async fn list_images(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<ImageSummary>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let images = docker
         .list_images(Some(ListImagesOptions::<String> {
@@ -60,14 +53,7 @@ pub async fn inspect_image(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<ImageDetail> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let info = docker
         .inspect_image(&id)
@@ -123,14 +109,7 @@ pub async fn pull_image(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<ImagePullRequest>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let image_ref = match &body.tag {
         Some(tag) => format!("{}:{}", body.image, tag),
@@ -194,14 +173,7 @@ pub async fn remove_image(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let results = docker
         .remove_image(
@@ -234,14 +206,7 @@ pub async fn image_history(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<ImageLayer>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let history = docker
         .image_history(&id)
