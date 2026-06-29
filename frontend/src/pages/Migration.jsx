@@ -332,10 +332,48 @@ export default function Migration({ navigate }) {
   };
 
   // === STEP 8: Execute ===
-  const handleStartExecution = () => {
+  const handleStartExecution = async () => {
     setExecPhase('running');
     setCurrentCommandGroup(0);
     setExecStartTime(Date.now());
+    setExecResults({});
+
+    try {
+      const result = await api.post(`/api/migration/${migrationId}/execute`, {});
+      const results = result.results || [];
+
+      // Map results by index
+      const resultMap = {};
+      results.forEach((r, i) => {
+        resultMap[r.index !== undefined ? r.index : i] = {
+          time: Date.now() - execStartTime,
+          status: r.exit_code === 0 ? 'done' : 'failed',
+          command: r.command,
+          stdout: r.stdout,
+          stderr: r.stderr,
+          exit_code: r.exit_code,
+        };
+      });
+      setExecResults(resultMap);
+
+      const allSuccess = results.every(r => r.exit_code === 0);
+      setExecPhase(allSuccess ? 'done' : 'done');
+      
+      // Fetch updated migration plan
+      try {
+        if (migrationId) {
+          const plan = await api.get(`/api/migration/${migrationId}`);
+          setVerification(plan);
+        }
+      } catch {/* ignore */}
+
+      setCompletedSteps(prev => new Set([...prev, 8]));
+      // Auto-advance to step 9
+      setStep(9);
+    } catch (err) {
+      toast('Execution failed: ' + err.message, 'error');
+      setExecPhase('pending');
+    }
   };
 
   const handleCommandGroupDone = async () => {
@@ -976,6 +1014,7 @@ export default function Migration({ navigate }) {
         const totalGroups = execCommands.length;
         const elapsed = execStartTime ? Math.floor((Date.now() - execStartTime) / 1000) : 0;
         const elapsedStr = elapsed > 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+        const hasResults = Object.keys(execResults).length > 0;
 
         return (
           <div style={{ display: 'grid', gap: '16px' }}>
@@ -984,7 +1023,7 @@ export default function Migration({ navigate }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h3 style={{ margin: 0 }}>
                   {execPhase === 'pending' ? 'Ready to Execute' :
-                   execPhase === 'running' ? `Executing (${currentCommandGroup + 1}/${totalGroups})` :
+                   execPhase === 'running' ? 'Executing...' :
                    'Execution Complete'}
                 </h3>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{elapsedStr}</span>
@@ -999,92 +1038,138 @@ export default function Migration({ navigate }) {
               }}>
                 <div style={{
                   height: '100%',
-                  width: `${execPhase === 'done' ? 100 : execPhase === 'pending' ? 0 : (currentCommandGroup / Math.max(totalGroups, 1)) * 100}%`,
+                  width: `${execPhase === 'done' ? 100 : execPhase === 'running' ? 50 : 0}%`,
                   background: execPhase === 'done' ? 'var(--green)' : 'var(--accent)',
                   borderRadius: '3px',
                   transition: 'width 0.5s ease',
                 }} />
               </div>
 
-              {/* Step status list */}
-              <div style={{ display: 'grid', gap: '4px' }}>
-                {execCommands.map((cmd, i) => {
-                  const result = execResults[i];
-                  const isComplete = !!result;
-                  const isCurrent = execPhase === 'running' && i === currentCommandGroup && !isComplete;
-                  const isPending = i > currentCommandGroup || execPhase === 'pending';
+              {/* Results list after execution */}
+              {hasResults && (
+                <div style={{ display: 'grid', gap: '4px' }}>
+                  {execCommands.map((cmd, i) => {
+                    const result = execResults[i];
+                    const isComplete = !!result;
+                    const failed = result && result.exit_code !== 0;
 
-                  return (
-                    <div key={i} style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      padding: '8px 12px',
-                      borderRadius: '6px',
-                      background: isCurrent ? 'var(--bg-tertiary)' : 'transparent',
-                      border: isCurrent ? '1px solid var(--accent)' : '1px solid transparent',
-                    }}>
-                      <span style={{
-                        fontSize: '0.9rem',
-                        width: '20px',
-                        textAlign: 'center',
+                    return (
+                      <div key={i} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        background: 'var(--bg-tertiary)',
+                        border: failed ? '1px solid var(--red)' : isComplete ? '1px solid var(--green-dim)' : '1px solid transparent',
                       }}>
-                        {isComplete ? <span style={{ color: 'var(--green)' }}>✓</span> :
-                         isCurrent ? <span style={{ color: 'var(--accent)' }}>▸</span> :
-                         <span style={{ color: 'var(--text-secondary)' }}>○</span>}
-                      </span>
-                      <code style={{
-                        flex: 1,
-                        fontSize: '0.75rem',
-                        color: isCurrent ? 'var(--accent)' : isComplete ? 'var(--text-secondary)' : 'var(--text-secondary)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}>
-                        {typeof cmd === 'string' ? cmd : (cmd.command || cmd).substring(0, 80)}
-                      </code>
-                      {result?.time && (
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                          {result.time > 60000 ? `${Math.floor(result.time / 60000)}m` : `${Math.floor(result.time / 1000)}s`}
+                        <span style={{
+                          fontSize: '0.9rem',
+                          width: '20px',
+                          textAlign: 'center',
+                        }}>
+                          {isComplete && !failed ? <span style={{ color: 'var(--green)' }}>✓</span> :
+                           failed ? <span style={{ color: 'var(--red)' }}>✗</span> :
+                           <span style={{ color: 'var(--text-secondary)' }}>○</span>}
                         </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                        <code style={{
+                          flex: 1,
+                          fontSize: '0.75rem',
+                          color: failed ? 'var(--red)' : isComplete ? 'var(--green)' : 'var(--text-secondary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {typeof cmd === 'string' ? cmd : (cmd.command || cmd).substring(0, 80)}
+                        </code>
+                        {result?.exit_code !== undefined && (
+                          <span style={{
+                            fontSize: '0.7rem',
+                            color: result.exit_code === 0 ? 'var(--green)' : 'var(--red)',
+                            fontWeight: 600,
+                          }}>
+                            exit={result.exit_code}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            {/* Current command display */}
-            {execPhase === 'running' && execCommands[currentCommandGroup] && (
-              <div className="card">
-                <h3>Current Command</h3>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                  Run this command on the appropriate host, then click <strong>Done</strong> to proceed.
+            {/* Command output details */}
+            {hasResults && Object.entries(execResults).map(([idx, r]) => {
+              if (!r.stdout && !r.stderr) return null;
+              return (
+                <div key={idx} className="card">
+                  <h3 style={{ color: r.exit_code !== 0 ? 'var(--red)' : 'var(--green)' }}>
+                    Command {parseInt(idx) + 1} {r.exit_code === 0 ? '✓' : '✗'}
+                  </h3>
+                  <pre style={{
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    padding: '12px',
+                    fontSize: '0.75rem',
+                    fontFamily: '"JetBrains Mono", monospace',
+                    color: 'var(--accent)',
+                    overflow: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    marginBottom: r.stderr ? '8px' : '0',
+                  }}>
+                    <code>{r.command || ''}</code>
+                  </pre>
+                  {r.stdout && (
+                    <div style={{ marginBottom: r.stderr ? '6px' : '0' }}>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>stdout:</div>
+                      <pre style={{
+                        background: 'var(--bg-primary)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        padding: '8px',
+                        fontSize: '0.7rem',
+                        fontFamily: '"JetBrains Mono", monospace',
+                        color: 'var(--green)',
+                        overflow: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        maxHeight: '150px',
+                      }}>
+                        {r.stdout}
+                      </pre>
+                    </div>
+                  )}
+                  {r.stderr && (
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--yellow)', marginBottom: '4px' }}>stderr:</div>
+                      <pre style={{
+                        background: 'var(--bg-primary)',
+                        border: '1px solid var(--red-dim)',
+                        borderRadius: '6px',
+                        padding: '8px',
+                        fontSize: '0.7rem',
+                        fontFamily: '"JetBrains Mono", monospace',
+                        color: 'var(--red)',
+                        overflow: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        maxHeight: '150px',
+                      }}>
+                        {r.stderr}
+                      </pre>
+                    </div>
+                  )}
                 </div>
-                <pre style={{
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--accent)',
-                  borderRadius: '6px',
-                  padding: '16px',
-                  fontSize: '0.8rem',
-                  fontFamily: '"JetBrains Mono", monospace',
-                  color: 'var(--accent)',
-                  overflow: 'auto',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}>
-                  <code>{typeof execCommands[currentCommandGroup] === 'string'
-                    ? execCommands[currentCommandGroup]
-                    : execCommands[currentCommandGroup].command}</code>
-                </pre>
-                <div className="btn-group" style={{ marginTop: '12px' }}>
-                  <button className="btn-primary" onClick={handleCommandGroupDone}>
-                    ✅ Done — Continue
-                  </button>
-                  <button className="btn-warning" onClick={handleCancelExecution}>
-                    🛑 Cancel
-                  </button>
-                </div>
+              );
+            })}
+
+            {/* Loading spinner while executing */}
+            {execPhase === 'running' && !hasResults && (
+              <div style={{ textAlign: 'center', padding: '32px' }}>
+                <div className="spinner spinner-lg" style={{ margin: '0 auto 16px' }} />
+                <div style={{ color: 'var(--text-secondary)' }}>Executing migration commands via shell...</div>
               </div>
             )}
 
@@ -1100,15 +1185,11 @@ export default function Migration({ navigate }) {
                   <div style={{ color: 'var(--green)', fontSize: '1.1rem', fontWeight: 600, marginBottom: '8px' }}>
                     ✓ All commands completed
                   </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Advancing to verification...
+                  </div>
                 </div>
               )}
-            </div>
-
-            <div className="card" style={{ borderLeft: '3px solid var(--yellow)', marginTop: '8px' }}>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                ⚠ <strong>Marionette never executes commands directly.</strong> Commands must be run manually by an administrator.
-                Credentials are never shown in plaintext.
-              </div>
             </div>
           </div>
         );
