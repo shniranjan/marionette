@@ -30,6 +30,7 @@ pub async fn list_endpoints(
 // ── Create Endpoint ───────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EndpointCreateBody {
     pub name: String,
     pub connection: String,
@@ -144,6 +145,7 @@ pub async fn get_endpoint(
 // ── Update Endpoint ───────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EndpointUpdateBody {
     #[serde(default)]
     pub name: Option<String>,
