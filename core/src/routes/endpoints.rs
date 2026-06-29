@@ -301,17 +301,19 @@ pub async fn endpoint_info(
             let mut free: u64 = 0;
             let mut total: u64 = 0;
             // Parse driver_status for Data Space Available / Data Space Total
+            // Docker returns [[key,val],[key,val]] — each inner vec is [key, val]
             if let Some(status) = info.driver_status {
-                let mut i = 0;
-                while i + 1 < status.len() {
-                    if let (Some(key), Some(val)) = (status[i].first(), status[i + 1].first()) {
-                        if key == "Data Space Available" || key == "Data Space Free" {
-                            free = parse_docker_size(val);
-                        } else if key == "Data Space Total" {
-                            total = parse_docker_size(val);
+                for entry in &status {
+                    if entry.len() >= 2 {
+                        let key = &entry[0];
+                        let val = &entry[1];
+                        let bytes = parse_docker_size(val);
+                        if key.contains("Data Space Available") || key.contains("Data Space Free") {
+                            free = bytes;
+                        } else if key.contains("Data Space Total") {
+                            total = bytes;
                         }
                     }
-                    i += 2;
                 }
             }
             (free, total)

@@ -86,6 +86,13 @@ export default function Stacks() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('endpoint:changed', handler);
+    return () => window.removeEventListener('endpoint:changed', handler);
+  }, [load]);
+
   const { filtered, searchQuery, setSearchQuery, stateFilter, setStateFilter } = useFilters(stacks, {
     searchFields: ['name'],
     stateField: 'status',

@@ -377,7 +377,7 @@ export default function Migration({ navigate }) {
       setExecResults(resultMap);
 
       const allSuccess = results.every(r => r.exitCode === 0);
-      setExecPhase(allSuccess ? 'done' : 'done');
+      setExecPhase(allSuccess ? 'done' : 'completed_with_errors');
       
       // Fetch updated migration plan
       try {
@@ -454,7 +454,7 @@ export default function Migration({ navigate }) {
       case 5: return allCriticalResolved();
       case 6: return targetEndpoint !== '';
       case 7: return dryRunResult !== null;
-      case 8: return execPhase === 'done';
+      case 8: return execPhase === 'done' || execPhase === 'completed_with_errors';
       case 9: return true;
       default: return false;
     }
@@ -1044,6 +1044,7 @@ export default function Migration({ navigate }) {
                 <h3 style={{ margin: 0 }}>
                   {execPhase === 'pending' ? 'Ready to Execute' :
                    execPhase === 'running' ? 'Executing...' :
+                   execPhase === 'completed_with_errors' ? 'Completed with Errors' :
                    'Execution Complete'}
                 </h3>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{elapsedStr}</span>
@@ -1058,8 +1059,8 @@ export default function Migration({ navigate }) {
               }}>
                 <div style={{
                   height: '100%',
-                  width: `${execPhase === 'done' ? 100 : execPhase === 'running' ? 50 : 0}%`,
-                  background: execPhase === 'done' ? 'var(--green)' : 'var(--accent)',
+                  width: `${execPhase === 'done' || execPhase === 'completed_with_errors' ? 100 : execPhase === 'running' ? 50 : 0}%`,
+                  background: execPhase === 'done' ? 'var(--green)' : execPhase === 'completed_with_errors' ? 'var(--yellow)' : 'var(--accent)',
                   borderRadius: '3px',
                   transition: 'width 0.5s ease',
                 }} />
@@ -1207,6 +1208,16 @@ export default function Migration({ navigate }) {
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                     Advancing to verification...
+                  </div>
+                </div>
+              )}
+              {execPhase === 'completed_with_errors' && (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ color: 'var(--yellow)', fontSize: '1.1rem', fontWeight: 600, marginBottom: '8px' }}>
+                    ⚠ Completed with errors — check results below
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    Some commands failed. Review errors before proceeding.
                   </div>
                 </div>
               )}
