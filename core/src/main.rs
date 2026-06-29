@@ -209,6 +209,7 @@ async fn main() {
         .route("/migration/plan", post(migration::plan_migration))
         .route("/migration/dry-run", post(migration::dry_run_migration))
         .route("/migration/{id}", get(migration::get_migration))
+        .route("/migration/{id}/rollback", post(migration::rollback_migration))
         .layer(cors)
         .with_state(state);
 

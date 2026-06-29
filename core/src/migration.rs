@@ -602,3 +602,37 @@ pub async fn get_migration(
 
     Ok(Json(plan))
 }
+
+// ── POST /migration/{id}/rollback ──────────────────────────────────
+
+pub async fn rollback_migration(
+    State(state): State<Arc<crate::AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let plan = {
+        let store = store().read().await;
+        store
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Migration plan '{}' not found", id)))?
+    };
+
+    // Audit the rollback attempt
+    state
+        .audit_log
+        .record(
+            "migration.rollback",
+            &plan.source_endpoint,
+            &id,
+            "rollback requested",
+            "gateway",
+        )
+        .await;
+
+    // TODO: Implement actual rollback logic — regenerate reverse commands
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "message": "Rollback stub — admin should restart container on source manually",
+        "migration_id": id
+    })))
+}
