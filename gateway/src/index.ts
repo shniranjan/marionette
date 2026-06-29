@@ -4,6 +4,7 @@ import fastifyHttpProxy from '@fastify/http-proxy';
 import fastifyStatic from '@fastify/static';
 import { readFileSync, existsSync } from 'fs';
 import https from 'https';
+import http from 'http';
 import { resolve } from 'path';
 
 import { createAuthHook } from './auth';
@@ -87,9 +88,24 @@ async function main() {
 
   // --- Start ---
   try {
-    await server.listen({ port: PORT, host: HOST });
-    const protocol = TLS_ENABLED ? 'https' : 'http';
-    server.log.info(`Gateway listening on ${protocol}://${HOST}:${PORT}`);
+    if (TLS_ENABLED) {
+      // HTTPS app on internal port; HTTP redirect on public port 8000
+      const APP_PORT = 8443;
+      await server.listen({ port: APP_PORT, host: HOST });
+      server.log.info(`Gateway (HTTPS) listening on ${HOST}:${APP_PORT}`);
+
+      // HTTP → HTTPS redirect server on port 8000
+      http.createServer((req, res) => {
+        const host = (req.headers.host || HOST).replace(/:8000$/, '');
+        res.writeHead(301, { Location: `https://${host}:${PORT}${req.url}` });
+        res.end();
+      }).listen(PORT, HOST, () => {
+        server.log.info(`HTTP→HTTPS redirect on ${HOST}:${PORT}`);
+      });
+    } else {
+      await server.listen({ port: PORT, host: HOST });
+      server.log.info(`Gateway (HTTP) listening on ${HOST}:${PORT}`);
+    }
     server.log.info(`Proxying ${PROXY_PREFIX}/* → ${PROXY_UPSTREAM}`);
     server.log.info(`Serving static files from ${staticRoot}`);
     if (!TLS_ENABLED) {
