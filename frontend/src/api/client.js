@@ -85,5 +85,5 @@ export function wsUrl(path) {
   if (ep && ep !== 'local') params.set('endpoint', ep);
   if (key) params.set('key', key);
   const qs = params.toString();
-  return `${proto}//${host}${path}${qs ? '?' + qs : ''}`;
+  return `${proto}//${host}${path}${qs ? (path.includes('?') ? '&' : '?') + qs : ''}`;
 }
