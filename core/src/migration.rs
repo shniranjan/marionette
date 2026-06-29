@@ -636,3 +636,176 @@ pub async fn rollback_migration(
         "migration_id": id
     })))
 }
+
+// ── POST /migration/{id}/execute ──────────────────────────────────
+
+/// Join multi-line shell commands that use backslash continuations.
+/// Filters out comment lines (starting with #) and empty lines.
+fn coalesce_commands(raw: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for line in raw {
+        let trimmed = line.trim();
+        // Skip comment-only lines and empty lines
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            if !current.is_empty() {
+                out.push(current.trim().to_string());
+                current = String::new();
+            }
+            continue;
+        }
+        // Append to current command
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(trimmed);
+
+        // If line ends with backslash, it's a continuation
+        if trimmed.ends_with('\\') {
+            // Remove trailing backslash but keep accumulating
+            current = current.trim_end_matches('\\').trim_end().to_string();
+            current.push(' '); // space before next continuation line
+        } else {
+            // Command is complete
+            out.push(current.trim().to_string());
+            current = String::new();
+        }
+    }
+
+    // Flush any remaining partial command
+    if !current.trim().is_empty() {
+        out.push(current.trim().to_string());
+    }
+
+    out
+}
+
+pub async fn execute_migration(
+    State(state): State<Arc<crate::AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    // Look up the plan
+    let plan = {
+        let store = store().read().await;
+        store
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Migration plan '{}' not found", id)))?
+    };
+
+    // Coalesce multi-line commands, skip comments
+    let commands = coalesce_commands(&plan.commands);
+
+    if commands.is_empty() {
+        return Ok(Json(serde_json::json!({
+            "migration_id": id,
+            "results": [],
+            "status": "no_commands"
+        })));
+    }
+
+    // Audit start of execution
+    state
+        .audit_log
+        .record(
+            "migration.execute.start",
+            &plan.source_endpoint,
+            &id,
+            &format!("executing {} commands for container {}", commands.len(), plan.container_name),
+            "gateway",
+        )
+        .await;
+
+    let mut results: Vec<CommandExecutionResult> = Vec::new();
+
+    for (idx, cmd) in commands.iter().enumerate() {
+        tracing::info!(
+            "Executing migration command [{}/{}]: {}",
+            idx + 1,
+            commands.len(),
+            cmd
+        );
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            async {
+                let output = tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .output()
+                    .await;
+
+                match output {
+                    Ok(out) => CommandExecutionResult {
+                        index: idx,
+                        command: cmd.clone(),
+                        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+                        exit_code: out.status.code().unwrap_or(-1),
+                    },
+                    Err(e) => CommandExecutionResult {
+                        index: idx,
+                        command: cmd.clone(),
+                        stdout: String::new(),
+                        stderr: format!("Spawn error: {}", e),
+                        exit_code: -1,
+                    },
+                }
+            },
+        )
+        .await;
+
+        let exec_result = match result {
+            Ok(r) => r,
+            Err(_) => CommandExecutionResult {
+                index: idx,
+                command: cmd.clone(),
+                stdout: String::new(),
+                stderr: "Command timed out after 120 seconds".to_string(),
+                exit_code: -1,
+            },
+        };
+
+        // Audit each command execution
+        state
+            .audit_log
+            .record(
+                "migration.execute.command",
+                &plan.source_endpoint,
+                &id,
+                &format!(
+                    "cmd [{}] exit={}: {}",
+                    idx,
+                    exec_result.exit_code,
+                    &cmd[..cmd.len().min(100)]
+                ),
+                "gateway",
+            )
+            .await;
+
+        results.push(exec_result);
+    }
+
+    // Audit completion
+    let succeeded = results.iter().filter(|r| r.exit_code == 0).count();
+    let failed = results.len() - succeeded;
+    state
+        .audit_log
+        .record(
+            "migration.execute.complete",
+            &plan.source_endpoint,
+            &id,
+            &format!("{} succeeded, {} failed out of {}", succeeded, failed, results.len()),
+            "gateway",
+        )
+        .await;
+
+    Ok(Json(serde_json::json!({
+        "migration_id": id,
+        "results": results,
+        "status": if failed == 0 { "success" } else { "partial_failure" }
+    })))
+}

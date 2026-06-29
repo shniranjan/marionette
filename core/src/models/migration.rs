@@ -38,3 +38,14 @@ pub struct DbConnection {
     pub will_break: bool,
     pub fix_suggestion: String,
 }
+
+/// Result of executing a single migration command via shell.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandExecutionResult {
+    pub index: usize,
+    pub command: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
