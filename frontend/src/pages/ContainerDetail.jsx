@@ -11,7 +11,7 @@ import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
 
-const TABS = ['info', 'logs', 'stats', 'env', 'mounts', 'network', 'labels'];
+const TABS = ['info', 'logs', 'stats', 'shell', 'env', 'mounts', 'network', 'labels'];
 
 export default function ContainerDetail({ id, name, navigate }) {
   const toast = useToast();
