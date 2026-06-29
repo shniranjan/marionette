@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import Modal from '../components/Modal';
 import JsonTree from '../components/JsonTree';
 import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
+import useFilters from '../hooks/useFilters';
+import FilterBar from '../components/FilterBar';
 
 export default function Images() {
   const [images, setImages] = useState([]);
@@ -29,7 +31,11 @@ export default function Images() {
 
   useEffect(() => { load(); }, [load]);
 
-  const { selected, toggle, selectAll, clear } = useSelection(images, 'id');
+  const { filtered, searchQuery, setSearchQuery } = useFilters(images, { searchFields: ['repoTags'] });
+
+  const filteredIds = useMemo(() => filtered.map(img => img.id), [filtered]);
+
+  const { selected, toggle, selectAll, clear } = useSelection(images, 'id', filteredIds);
 
   const handlePull = async () => {
     if (!pullImage.trim()) return;
@@ -71,7 +77,7 @@ export default function Images() {
   return (
     <div>
       <div className="section-header">
-        <h1>Images ({images.length})</h1>
+        <h1>Images ({filtered.length}{filtered.length !== images.length ? ` / ${images.length}` : ''})</h1>
         <div className="btn-group">
           <button className="btn-primary" onClick={() => setShowPull(true)}>⬇ Pull Image</button>
           <button onClick={load}>🔄 Refresh</button>
@@ -83,17 +89,26 @@ export default function Images() {
       <ListToolbar
         selected={selected}
         total={images.length}
+        filteredIds={filteredIds}
         onClear={clear}
         actions={[
           { label: '🗑 Remove', onClick: handleRemove, variant: 'danger' },
         ]}
       />
 
-      {images.length === 0 ? (
+      <FilterBar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search images..."
+        filteredCount={filtered.length}
+        totalCount={images.length}
+      />
+
+      {filtered.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No images</div>
       ) : (
         <div style={{ display: 'grid', gap: '12px' }}>
-          {images.map((img) => {
+          {filtered.map((img) => {
             const tags = img.repoTags || [];
             const isSel = selected.has(img.id);
             return (

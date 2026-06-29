@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react';
 
-export default function ListToolbar({ selected, total, onClear, actions }) {
+export default function ListToolbar({ selected, total, onClear, actions, filteredIds }) {
   if (!selected || selected.size === 0) return null;
+
+  const displayTotal = filteredIds?.length || total;
 
   return (
     <div style={{
@@ -16,7 +18,7 @@ export default function ListToolbar({ selected, total, onClear, actions }) {
       fontSize: '0.85rem',
     }}>
       <span style={{ fontWeight: 600 }}>
-        {selected.size} of {total} selected
+        {selected.size} of {displayTotal} selected
       </span>
       <div className="btn-group" style={{ marginLeft: 'auto' }}>
         {actions.map((action, i) => (
@@ -54,7 +56,7 @@ export default function ListToolbar({ selected, total, onClear, actions }) {
 }
 
 // Hook: manages selection state for a list of items
-export function useSelection(items, idKey = 'id') {
+export function useSelection(items, idKey = 'id', filteredIds) {
   const [selected, setSelected] = useState(new Set());
 
   const toggle = useCallback((item) => {
@@ -67,6 +69,20 @@ export function useSelection(items, idKey = 'id') {
     });
   }, [idKey]);
 
+  const toggleAll = useCallback(() => {
+    if (!filteredIds || filteredIds.length === 0) return;
+    setSelected(prev => {
+      const allFilteredSelected = filteredIds.every(id => prev.has(id));
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        filteredIds.forEach(id => next.delete(id));
+      } else {
+        filteredIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  }, [filteredIds]);
+
   const selectAll = useCallback(() => {
     const keys = items.map(item => item[idKey] || item.name).filter(Boolean);
     setSelected(new Set(keys));
@@ -74,5 +90,8 @@ export function useSelection(items, idKey = 'id') {
 
   const clear = useCallback(() => setSelected(new Set()), []);
 
-  return { selected, toggle, selectAll, clear };
+  const allFilteredSelected = filteredIds && filteredIds.length > 0 &&
+    filteredIds.every(id => selected.has(id));
+
+  return { selected, toggle, toggleAll, selectAll, clear, allFilteredSelected };
 }
