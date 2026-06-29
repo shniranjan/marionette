@@ -15,6 +15,8 @@
   --red-dim: #da3633;
   --card-bg: #161b22;
   --card-border: #30363d;
+  --bg-secondary: #0d1117;
+  --bg-tertiary: #21262d;
 }
 
 /* Light */
@@ -29,6 +31,8 @@
   --red-dim: #a40e26;
   --card-bg: #f6f8fa;
   --card-border: #d0d7de;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f0f2f5;
 }
 
 /* Sepia */
@@ -43,6 +47,8 @@
   --red-dim: #b72a27;
   --card-bg: #eee8d5;
   --card-border: #d3cbb8;
+  --bg-secondary: #fdf6e3;
+  --bg-tertiary: #e8dfc4;
 }
 
 /* ---------- Layout ---------- */
