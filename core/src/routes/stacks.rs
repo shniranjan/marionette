@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -18,7 +18,11 @@ fn error(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 pub async fn list_stacks(
     State(state): State<Arc<crate::AppState>>,
+    Query(_params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<StackSummary>> {
+    // Note: Stack listing is local-only. Remote Docker endpoints may not have the
+    // docker compose plugin installed. The endpoint query parameter is accepted for
+    // compatibility with the frontend endpoint switcher but has no effect.
     let compose = ComposeRunner::new(state.stacks_dir.clone());
     let stacks = compose.list_stacks();
     Ok(Json(stacks))

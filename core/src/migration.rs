@@ -926,7 +926,7 @@ fn build_scp_commands(
             ));
             commands.push(format!("scp {} user@{}:/tmp/marionette/", tar_name, ssh_host));
             commands.push(format!(
-                "# On target: docker run --rm -v {}:/data -v /tmp/marionette:/in alpine {} /in/{}_{}{} -C /data",
+                "# === MANUAL STEP (run on target) === docker run --rm -v {}:/data -v /tmp/marionette:/in alpine {} /in/{}_{}{} -C /data",
                 tgt, tar_create, migration_id, vol.name, ext
             ));
             commands.push(String::new());
