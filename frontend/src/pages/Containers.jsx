@@ -4,8 +4,11 @@ import StatusBadge from '../components/StatusBadge';
 import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
 import useFilters from '../hooks/useFilters';
+import useFavorites from '../hooks/useFavorites';
 import SortableTable from '../components/SortableTable';
 import FilterBar from '../components/FilterBar';
+import Modal from '../components/Modal';
+import MultiLogViewer from '../components/MultiLogViewer';
 
 function renderPorts(ports) {
   if (!ports || !Array.isArray(ports) || ports.length === 0) {
@@ -22,6 +25,9 @@ export default function Containers({ navigate }) {
   const [containers, setContainers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showMergedLogs, setShowMergedLogs] = useState(false);
+  const [mergedContainerIds, setMergedContainerIds] = useState([]);
+  const { favorites, toggleFavorite, isFavorite } = useFavorites();
 
   const load = useCallback(async () => {
     try {
@@ -68,7 +74,17 @@ export default function Containers({ navigate }) {
     },
   });
 
-  // Filtered IDs for selection (derived from filtered data)
+  // Split into pinned and unpinned
+  const pinned = useMemo(
+    () => filtered.filter((c) => favorites.some((f) => f.id === c.id)),
+    [filtered, favorites],
+  );
+  const unpinned = useMemo(
+    () => filtered.filter((c) => !favorites.some((f) => f.id === c.id)),
+    [filtered, favorites],
+  );
+
+  // Filtered IDs for selection (all filtered items)
   const filteredIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
 
   const { selected, toggle, toggleAll, clear, allFilteredSelected } = useSelection(
@@ -204,6 +220,46 @@ export default function Containers({ navigate }) {
     },
   ];
 
+  // Render a table section (pinned or regular) with optional heading
+  const renderTable = (dataToRender, heading, headingIcon) => {
+    if (dataToRender.length === 0) return null;
+    return (
+      <div>
+        {heading && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            marginBottom: '8px',
+            marginTop: headingIcon ? '16px' : '0',
+            paddingBottom: '6px',
+            borderBottom: '1px solid var(--border)',
+          }}>
+            <span style={{ fontSize: '0.85rem' }}>{headingIcon || ''}</span>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              {heading} ({dataToRender.length})
+            </span>
+          </div>
+        )}
+        <SortableTable
+          data={dataToRender}
+          columns={columns}
+          keyField="id"
+          onRowClick={(row) => navigate('containerDetail', { id: row.id, name: row.name })}
+          selected={selected}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+          allSelected={allFilteredSelected || false}
+          emptyMessage="No containers"
+          fav={{
+            isFavorite,
+            onToggle: (id, name) => toggleFavorite(id, name),
+          }}
+        />
+      </div>
+    );
+  };
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
   return (
@@ -253,20 +309,39 @@ export default function Containers({ navigate }) {
           { label: '⏹ Stop', onClick: () => handleAction('stop'), disabled: !hasRunning },
           { label: '🔄 Restart', onClick: () => handleAction('restart'), disabled: !hasRunning },
           { label: '🗑 Remove', onClick: handleRemove, variant: 'danger' },
+          ...(selected.size >= 2 && selected.size <= 5
+            ? [{
+                label: '📋 Merged Logs',
+                onClick: () => {
+                  setMergedContainerIds(Array.from(selected));
+                  setShowMergedLogs(true);
+                },
+              }]
+            : []),
         ]}
       />
 
-      <SortableTable
-        data={filtered}
-        columns={columns}
-        keyField="id"
-        onRowClick={(row) => navigate('containerDetail', { id: row.id, name: row.name })}
-        selected={selected}
-        onToggle={toggle}
-        onToggleAll={toggleAll}
-        allSelected={allFilteredSelected || false}
-        emptyMessage="No containers"
-      />
+      {renderTable(pinned, 'Pinned', '★')}
+      {renderTable(unpinned, pinned.length > 0 ? 'All Containers' : null, null)}
+
+      {filtered.length === 0 && pinned.length === 0 && (
+        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+          No containers
+        </div>
+      )}
+
+      {showMergedLogs && (
+        <Modal
+          title={`Merged Logs (${mergedContainerIds.length} containers)`}
+          size="large"
+          onClose={() => setShowMergedLogs(false)}
+        >
+          <MultiLogViewer
+            containerIds={mergedContainerIds}
+            onClose={() => setShowMergedLogs(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

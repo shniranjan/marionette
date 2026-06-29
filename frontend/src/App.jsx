@@ -4,6 +4,7 @@ import { ToastProvider, ToastStyles } from './components/Toast';
 import AuthGate from './components/AuthGate';
 import Sidebar from './components/Sidebar';
 import EndpointSwitcher, { getCurrentEndpoint, setEndpoint } from './components/EndpointSwitcher';
+import Breadcrumb from './components/Breadcrumb';
 import Dashboard from './pages/Dashboard';
 import Containers from './pages/Containers';
 import ContainerDetail from './pages/ContainerDetail';
@@ -17,6 +18,7 @@ import Migration from './pages/Migration';
 import Swarm from './pages/Swarm';
 import Nginx from './pages/Nginx';
 import Routes from './pages/Routes';
+import Templates from './pages/Templates';
 import ErrorBoundary from './components/ErrorBoundary';
 import MaintenanceOverlay from './components/MaintenanceOverlay';
 
@@ -34,6 +36,24 @@ const PAGES = {
   swarm: Swarm,
   nginx: Nginx,
   routes: Routes,
+  templates: Templates,
+};
+
+const PAGE_LABELS = {
+  dashboard: 'Dashboard',
+  containers: 'Containers',
+  containerDetail: 'Container',
+  images: 'Images',
+  volumes: 'Volumes',
+  networks: 'Networks',
+  stacks: 'Stacks',
+  system: 'System',
+  endpoints: 'Endpoints',
+  migration: 'Migration',
+  swarm: 'Swarm',
+  nginx: 'Nginx LB',
+  routes: 'Routes',
+  templates: 'Templates',
 };
 
 export default function App() {
@@ -41,6 +61,12 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [pageProps, setPageProps] = useState({});
   const [currentEndpoint, setCurrentEndpoint] = useState(() => getCurrentEndpoint());
+  const [recents, setRecents] = useState(() => {
+    try {
+      const raw = localStorage.getItem('marionette_recents');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
 
   const checkAuth = useCallback(() => {
     setAuthenticated(!!getKey());
@@ -70,6 +96,25 @@ export default function App() {
   const navigate = useCallback((p, props = {}) => {
     setPage(p);
     setPageProps(props);
+
+    // Track recent navigation (skip dashboard)
+    if (p !== 'dashboard') {
+      setRecents((prev) => {
+        const id = props.id || null;
+        const name = props.name || PAGE_LABELS[p] || p;
+        const entry = { id, name, type: p, timestamp: Date.now() };
+
+        // Remove existing entry with same type+id
+        const filtered = prev.filter(
+          (r) => !(r.type === p && r.id === id),
+        );
+
+        // Cap at 10 and prepend
+        const next = [entry, ...filtered].slice(0, 10);
+        try { localStorage.setItem('marionette_recents', JSON.stringify(next)); } catch {}
+        return next;
+      });
+    }
   }, []);
 
   const handleEndpointChange = useCallback((id) => {
@@ -92,8 +137,10 @@ export default function App() {
           onNavigate={navigate}
           currentEndpoint={currentEndpoint}
           onEndpointChange={handleEndpointChange}
+          recents={recents}
         />
         <main className="main-content">
+          <Breadcrumb page={page} pageProps={pageProps} onNavigate={navigate} />
           <ErrorBoundary key={page}>
             <PageComponent navigate={navigate} currentEndpoint={currentEndpoint} {...pageProps} />
           </ErrorBoundary>

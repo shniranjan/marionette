@@ -9,6 +9,7 @@ pub mod audit;
 pub mod migration;
 pub mod route;
 pub mod user;
+pub mod template;
 
 // Re-export everything from the old flat namespace
 pub use endpoint::*;
@@ -22,3 +23,4 @@ pub use audit::*;
 pub use migration::*;
 pub use route::*;
 pub use user::*;
+pub use template::*;
