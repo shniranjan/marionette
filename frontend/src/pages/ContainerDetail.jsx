@@ -97,8 +97,14 @@ export default function ContainerDetail({ id, name, navigate }) {
   if (error) return <div className="text-danger">Error: {error}</div>;
   if (!inspect) return <div className="text-secondary">No data</div>;
 
-  const displayName = (name || inspect.name || id || '').replace(/^\//, '');
+  const displayName = (name || inspect.name || id || '').replace(/^\\//, '');
   const state = inspect.state || 'unknown';
+
+  // Extract stack name from Docker Compose labels
+  const composeProject = inspect?.labels?.['com.docker.compose.project'] ||
+                          inspect?.Config?.Labels?.['com.docker.compose.project'];
+  const composeService = inspect?.labels?.['com.docker.compose.service'] ||
+                          inspect?.Config?.Labels?.['com.docker.compose.service'];
 
   return (
     <div>
@@ -135,6 +141,19 @@ export default function ContainerDetail({ id, name, navigate }) {
         ID: <code>{id?.substring(0, 12)}</code> &nbsp;|&nbsp;
         Image: <code>{inspect.image}</code> &nbsp;|&nbsp;
         Created: <code>{inspect.created ? new Date(inspect.created).toLocaleString() : '—'}</code>
+        {composeProject && (
+          <span>
+            &nbsp;|&nbsp;
+            Stack: <button
+              className="btn-sm outline"
+              style={{ fontFamily: 'var(--pico-font-family-monospace)', fontSize: '0.75rem', padding: '1px 6px' }}
+              onClick={() => navigate('stacks')}
+              title={composeService ? `Service: ${composeService}` : ''}
+            >
+              📚 {composeProject}
+            </button>
+          </span>
+        )}
       </div>
 
       {/* Tabs */}

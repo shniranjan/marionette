@@ -94,6 +94,29 @@ export default function Dashboard({ navigate }) {
         />
       </div>
 
+      {/* Running containers quick list */}
+      {running > 0 && (
+        <div className="card mb-24">
+          <h2>Running Containers ({running})</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {containerList
+              .filter(c => c.state === 'running')
+              .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+              .map(c => (
+                <button
+                  key={c.id || c.Id}
+                  className="btn-sm outline"
+                  style={{ fontFamily: 'var(--pico-font-family-monospace)', fontSize: '0.8rem' }}
+                  onClick={() => navigate('containerDetail', { id: c.id || c.Id, name: c.name || c.Name })}
+                  title={c.image || c.Image}
+                >
+                  {c.name || c.Name}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* System Info */}
       {system && (
         <div className="card mb-24">
