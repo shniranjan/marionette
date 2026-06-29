@@ -15,13 +15,14 @@ git clone https://github.com/shniranjan/marionette.git
 cd marionette
 docker compose up -d --build
 
-# Open https://localhost:8000 (self-signed cert on first run)
-# Or http://localhost:8000 if TLS certs aren't mounted
+# HTTPS on port 8443 (self-signed cert on first run)
+# HTTP on port 8000 → redirects to HTTPS automatically
+# Open https://localhost:8443
 ```
 
-> **TLS is automatic.** On first start, Marionette generates a self-signed certificate. Your browser will show a warning — accept it on LAN. Mount your own cert at `./certs/` to override. See [TLS Configuration](#tls-configuration).
+> **TLS is automatic.** On first start, Marionette generates a self-signed certificate. Your browser will show a warning — accept it on LAN. Mount your own cert at `./certs/` to override.
 
-Or with docker-compose:
+With docker-compose:
 
 ```yaml
 services:
@@ -30,16 +31,15 @@ services:
     image: marionette:local
     container_name: marionette
     ports:
-      - "8000:8000"
+      - "8000:8000"     # HTTP → 301 redirect to HTTPS
+      - "8443:8443"     # HTTPS app
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./stacks:/stacks
       - ./data:/data
-      - ./certs:/app/certs               # TLS cert persistence
+      - ./certs:/app/certs               # TLS cert persistence + endpoint client certs
     environment:
       - MARIONETTE_KEY=${MARIONETTE_KEY:-}
-      # - TLS_KEY=/path/to/your/key.pem   # optional: use your own cert
-      # - TLS_CERT=/path/to/your/cert.pem
     restart: unless-stopped
 ```
 
@@ -57,14 +57,14 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 | **Volumes** | List with selection toolbar, create, remove, prune, deep inspection (driver, size, usage, file count) |
 | **Networks** | List with selection toolbar, create, remove, connect/disconnect containers, prune |
 | **Stacks** | List compose stacks, edit YAML (CodeMirror), save-only or save & deploy. Detects running/stopped status. Supports both `docker-compose.yml` and `compose.yml`. |
-| **Endpoints** | Connect multiple Docker hosts (unix, TCP, TLS). Host switcher in sidebar. Connection testing. Setup-script generator for remote Docker TLS configuration. |
+| **Endpoints** | Connect multiple Docker hosts (unix, TCP, TLS). Host switcher in sidebar. Per-endpoint TLS certificate paths. Connection testing. Setup-script generator with auto firewall detection (ufw/firewalld) and systemd integration. |
 | **Swarm** | Nodes, services, tasks, secrets, configs. Init/join/leave. Scale and update services. |
 | **Nginx LB** | Label-driven upstream config generation (`marionette.lb.*`). Regenerate, test, and reload nginx config from the UI. |
 | **Migration** | 9-step guided wizard. Cold migration with volume sync. Database connection review. Dry run. Command-only (no SSH keys stored). |
 | **System** | Docker info, version, events stream, prune all resource types, audit log |
-|| **Auth** | Access key authentication. Multiple key support. Dev mode available. |
+| **Auth** | Access key authentication. Multiple key support. Dev mode available. |
 | **Design** | Pico CSS foundation. 6 color palettes × 3 modes (18 visual variants). Dark/Light/Sepia × Blue/Slate/Amber/Green/Violet/Rose. |
-| **TLS** | Auto-generated self-signed certificate on first run. Persists across restarts. Overridable with your own cert. |
+| **TLS** | Auto-generated self-signed certificate on first run. Persists across restarts. HTTP :8000 → 301 redirect to HTTPS :8443. Overridable with your own cert. |
 | **Resilience** | Maintenance overlay detects server downtime, shows timer, auto-reconnects when back online. |
 
 ---
@@ -90,9 +90,28 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 
 ## Architecture
 
-Marionette manages containers and writes route config. AuxGate (separate container) reads config and proxies traffic. Zero runtime coupling — Marionette can be down, AuxGate still routes. AuxGate can be deployed standalone without Marionette.
+```
+┌──────────────────────────────────────────┐
+│              Marionette Container         │
+│                                           │
+│  :8000  →  HTTP redirect (301 → :8443)   │
+│  :8443  →  Fastify gateway (TLS)         │
+│             ├─ /api/* → Rust core :9119  │
+│             └─ /*     → React SPA        │
+│                                           │
+│  :9119  →  Rust/Axum core                │
+│             ├─ EndpointRegistry (SQLite)  │
+│             ├─ Bollard Docker clients     │
+│             └─ WebSocket (logs, stats)    │
+│                                           │
+│  Nginx   →  LB upstream configs          │
+│  SQLite  →  /data/marionette.db          │
+└──────────────────────────────────────────┘
+```
 
-**Tech Stack:** Rust + Node.js + React + SQLite
+**Tech Stack:** Rust (Axum + Bollard) + Node.js (Fastify) + React (Vite) + SQLite + Pico CSS
+
+Marionette manages containers and writes route config. AuxGate (separate container) reads config and proxies traffic. Zero runtime coupling — Marionette can be down, AuxGate still routes. AuxGate can be deployed standalone without Marionette.
 
 ---
 
@@ -114,7 +133,12 @@ Marionette manages containers and writes route config. AuxGate (separate contain
 
 ## TLS Configuration
 
-Marionette auto-generates a self-signed TLS certificate on first startup. HTTPS works immediately — your browser will show a warning; accept it for LAN use.
+Marionette auto-generates a self-signed TLS certificate on first startup. Two ports are exposed:
+
+| Port | Protocol | Behavior |
+|------|----------|----------|
+| 8000 | HTTP | 301 redirect to `https://<host>:8443` |
+| 8443 | HTTPS | The application (Fastify + React SPA) |
 
 ### Using your own certificate
 
@@ -150,15 +174,28 @@ The cert persists across restarts when `./certs:/app/certs` is mounted. Remove t
 |---------|:--------:|---------|-------------|
 | `MARIONETTE_KEY` | Production | — | Access key for web UI. Empty = no auth (dev only). Multiple keys: `key1,key2` |
 | `MARIONETTE_STACKS_DIR` | No | `/stacks` | Directory for docker-compose stack files |
-| `MARIONETTE_DB_PATH` | No | `/data/marionette.db` | SQLite database path for audit log |
-|| `MARIONETTE_NGINX_DIR` | No | — | Output directory for generated nginx upstream configs |
+| `MARIONETTE_DB_PATH` | No | `/data/marionette.db` | SQLite database path (endpoints, users, routes, audit log) |
 | `MARIONETTE_LOG_LEVEL` | No | `info` | Log level: trace, debug, info, warn, error |
+
+---
+
+## Remote Docker Setup
+
+Connect to remote Docker hosts via TLS. Use the built-in setup script generator (Endpoints page → 🔧 Setup Script) which:
+
+1. Generates CA + server + client certificates
+2. Configures Docker daemon for TLS (`daemon.json`)
+3. Handles systemd `-H fd://` conflicts (auto drop-in override)
+4. Opens firewall port (auto-detects ufw or firewalld)
+5. Copies client certs with correct permissions
+
+Each endpoint can have its own TLS certificate path (`certPath` field), replacing the single global `DOCKER_CERT_PATH` env var.
 
 ---
 
 ## Security
 
-- **TLS by default:** Auto-generated self-signed certificate on first run. HTTPS everywhere. Override with your own cert via `TLS_KEY`/`TLS_CERT` env vars. [TLS Configuration](#tls-configuration)
+- **TLS by default:** Auto-generated self-signed certificate on first run. HTTP → HTTPS redirect. Override with your own cert via `TLS_KEY`/`TLS_CERT` env vars.
 - **Access Key:** All API requests require authentication when `MARIONETTE_KEY` is set.
 - **Credential Masking:** Environment variables and volume driver options are masked by default in the UI
 - **Socket Proxy:** Remote hosts use `tecnativa/docker-socket-proxy` with granular API permissions
