@@ -369,13 +369,6 @@ async fn build_migration_plan(
     let mut commands: Vec<String> = Vec::new();
 
     if generate_commands {
-        // Read source endpoint connection for SSH target inference
-        let source_ep = state.registry.get(source_endpoint_id).await;
-        let _source_conn = source_ep
-            .as_ref()
-            .map(|e| e.connection.clone())
-            .unwrap_or_else(|| "unix:///var/run/docker.sock".to_string());
-
         let target_conn = if let Some(target_id) = target_endpoint_id {
             state.registry
                 .get(target_id)
@@ -387,108 +380,42 @@ async fn build_migration_plan(
         };
 
         let has_remote_target = !same_host && !target_conn.is_empty();
-
-        // Build SSH host from target connection
         let ssh_host = if has_remote_target {
-            // Extract host from tcp://host:port
-            if let Some(rest) = target_conn.strip_prefix("tcp://") {
-                rest.split(':').next().unwrap_or("unknown-host")
-            } else {
-                "unknown-host"
-            }
+            target_conn
+                .strip_prefix("tcp://")
+                .and_then(|r| r.split(':').next())
+                .unwrap_or("unknown-host")
         } else {
             ""
         };
 
-        // Generate commands for each volume
-        let mut vol_exports: Vec<String> = Vec::new();
-        for vol in &volumes {
-            if vol.driver_category == "filesystem" || vol.driver_category == "unknown" {
-                let tar_name = format!("/tmp/marionette/{}_{}.tar.gz", migration_id, vol.name);
-                commands.push(format!(
-                    "# Export volume: {}",
-                    vol.name
-                ));
-                commands.push(format!(
-                    "docker run --rm -v {}:/data -v /tmp/marionette:/out alpine:latest \\",
-                    vol.name
-                ));
-                commands.push(format!(
-                    "  tar czf /out/{}_{}.tar.gz -C /data .",
-                    migration_id, vol.name
-                ));
-                if has_remote_target {
-                    commands.push(format!(
-                        "# === ADMIN MUST EXECUTE THE FOLLOWING scp COMMAND MANUALLY ===",
-                    ));
-                    commands.push(format!(
-                        "scp {} user@{}:/tmp/marionette/",
-                        tar_name, ssh_host
-                    ));
-                }
-                vol_exports.push(format!("{}_{}.tar.gz", migration_id, vol.name));
-            } else {
-                commands.push(format!(
-                    "# Volume '{}' uses driver '{}' ({}) — may require reconnection on target",
-                    vol.name, vol.driver, vol.driver_category
-                ));
-            }
-        }
-
-        if has_remote_target {
-            commands.push(String::new());
-            commands.push("# === PIPE-DIRECT TRANSFER (recommended) ===".to_string());
-            commands.push("# On source host:".to_string());
-            for vol in &volumes {
-                if vol.driver_category == "filesystem" || vol.driver_category == "unknown" {
-                    commands.push(format!(
-                        "docker run --rm -v {}:/data alpine:latest tar czf - -C /data . | \\",
-                        vol.name
-                    ));
-                    commands.push(format!(
-                        "  ssh user@{} \"docker run --rm -i -v {}:/data alpine:latest tar xzf - -C /data\"",
-                        ssh_host, vol.name
-                    ));
-                }
+        if !has_remote_target {
+            build_same_host_commands(&mut commands, &container_name, &volumes, volume_overrides);
+        } else {
+            match transfer_method {
+                "scp" => build_scp_commands(&mut commands, &volumes, &migration_id, ssh_host, compression, volume_overrides),
+                "rsync-over-ssh" => build_rsync_commands(&mut commands, &volumes, &migration_id, ssh_host, compression, volume_overrides),
+                "pipe-direct" => build_pipe_commands(&mut commands, &volumes, &migration_id, ssh_host, compression, volume_overrides),
+                "export-s3" => build_s3_commands(&mut commands, &volumes, &migration_id, ssh_host, compression, volume_overrides),
+                _ => build_pipe_commands(&mut commands, &volumes, &migration_id, ssh_host, compression, volume_overrides),
             }
 
+            // Compose deploy
             commands.push(String::new());
             commands.push("# === COMPOSE DEPLOY on Target ===".to_string());
-            commands.push(format!(
-                "# scp docker-compose.yml user@{}:~/",
-                ssh_host
-            ));
-            commands.push(format!(
-                "ssh user@{} \"cd ~ && docker compose up -d\"",
-                ssh_host
-            ));
+            commands.push(format!("# scp docker-compose.yml user@{}:~/", ssh_host));
+            commands.push(format!("ssh user@{} \"cd ~ && docker compose up -d\"", ssh_host));
 
+            // Verify
             commands.push(String::new());
             commands.push("# === VERIFY ===".to_string());
-            commands.push(format!(
-                "# ssh user@{} \"docker ps --filter name={}\"",
-                ssh_host, container_name
-            ));
+            commands.push(format!("# ssh user@{} \"docker ps --filter name={}\"", ssh_host, container_name));
 
+            // Cleanup
             commands.push(String::new());
             commands.push("# === CLEANUP ===".to_string());
             commands.push("# rm -rf /tmp/marionette/*.tar.gz".to_string());
-            commands.push(format!(
-                "# ssh user@{} \"rm -rf /tmp/marionette/*.tar.gz\"",
-                ssh_host
-            ));
-        } else {
-            // Same host — much simpler commands
-            commands.push(String::new());
-            commands.push("# === SAME-HOST MIGRATION ===".to_string());
-            commands.push("# Stop source container".to_string());
-            commands.push(format!("docker stop {}", container_name));
-            commands.push(String::new());
-            commands.push("# Deploy compose file".to_string());
-            commands.push("docker compose up -d".to_string());
-            commands.push(String::new());
-            commands.push("# === VERIFY ===".to_string());
-            commands.push(format!("# docker ps --filter name={}", container_name));
+            commands.push(format!("# ssh user@{} \"rm -rf /tmp/marionette/*.tar.gz\"", ssh_host));
         }
     }
 
@@ -891,4 +818,291 @@ pub async fn execute_migration(
         "results": results,
         "status": if failed == 0 { "success" } else { "partial_failure" }
     })))
+}
+
+// ── Command Builder Helpers ─────────────────────────────────────
+
+use crate::models::migration::{MigrationVolume, VolumeOverride};
+
+/// Return (tar_flag, extension) for the given compression method.
+fn compression_flag(compression: &str) -> (&str, &str) {
+    match compression {
+        "zstd" => ("--zstd", ".tar.zst"),
+        "lz4" => ("--lz4", ".tar.lz4"),
+        "pigz" => ("--use-compress-program=pigz", ".tar.gz"),
+        "none" => ("", ".tar"),
+        _ => ("czf", ".tar.gz"),
+    }
+}
+
+/// Resolve the target volume name: override if set, otherwise volume name.
+fn vol_target_name<'a>(vol: &'a MigrationVolume, overrides: &'a HashMap<String, VolumeOverride>) -> &'a str {
+    overrides
+        .get(&vol.name)
+        .and_then(|o| o.target_name.as_deref())
+        .unwrap_or(&vol.name)
+}
+
+// ── Same-Host Migration ─────────────────────────────────────────
+
+fn build_same_host_commands(
+    commands: &mut Vec<String>,
+    container_name: &str,
+    volumes: &[MigrationVolume],
+    overrides: &HashMap<String, VolumeOverride>,
+) {
+    commands.push("# === SAME-HOST MIGRATION ===".to_string());
+    commands.push("# Stop source container".to_string());
+    commands.push(format!("docker stop {}", container_name));
+    commands.push(String::new());
+
+    // Handle volume renames
+    for vol in volumes {
+        if overrides.get(&vol.name).map_or(false, |o| o.skip) {
+            commands.push(format!("# Volume '{}' skipped per configuration", vol.name));
+            continue;
+        }
+        let tgt = vol_target_name(vol, overrides);
+        if tgt != vol.name {
+            commands.push(format!("# Rename volume '{}' → '{}'", vol.name, tgt));
+            commands.push(format!("docker volume create --name {}", tgt));
+            commands.push(format!(
+                "docker run --rm -v {}:/from -v {}:/to alpine cp -a /from/. /to/.",
+                vol.name, tgt
+            ));
+            commands.push(format!("# docker volume rm {}  # remove old volume after verification", vol.name));
+            commands.push(String::new());
+        }
+    }
+
+    commands.push("# Deploy compose file".to_string());
+    commands.push("docker compose up -d".to_string());
+    commands.push(String::new());
+    commands.push("# === VERIFY ===".to_string());
+    commands.push(format!("# docker ps --filter name={}", container_name));
+}
+
+// ── SCP Transfer ─────────────────────────────────────────────────
+
+fn build_scp_commands(
+    commands: &mut Vec<String>,
+    volumes: &[MigrationVolume],
+    migration_id: &str,
+    ssh_host: &str,
+    compression: &str,
+    overrides: &HashMap<String, VolumeOverride>,
+) {
+    let (tar_flag, ext) = compression_flag(compression);
+    let tar_create = if tar_flag.is_empty() {
+        format!("tar cf")
+    } else if tar_flag == "czf" {
+        "tar czf".to_string()
+    } else {
+        format!("tar {}", tar_flag)
+    };
+
+    commands.push("# === SCP TRANSFER ===".to_string());
+    commands.push(format!("# Pre-create temp dir on target"));
+    commands.push(format!("ssh user@{} \"mkdir -p /tmp/marionette\"", ssh_host));
+    commands.push(String::new());
+
+    for vol in volumes {
+        if overrides.get(&vol.name).map_or(false, |o| o.skip) {
+            commands.push(format!("# Volume '{}' skipped", vol.name));
+            continue;
+        }
+        let tgt = vol_target_name(vol, overrides);
+
+        if vol.driver_category == "filesystem" || vol.driver_category == "unknown" || vol.driver_category == "ephemeral" {
+            let tar_name = format!("/tmp/marionette/{}_{}{}", migration_id, vol.name, ext);
+            commands.push(format!("# Export volume: {} (→ {})", vol.name, tgt));
+            commands.push(format!(
+                "docker run --rm -v {}:/data -v /tmp/marionette:/out alpine:latest \\\\",
+                vol.name
+            ));
+            commands.push(format!(
+                "  {} /out/{}_{}{} -C /data .",
+                tar_create, migration_id, vol.name, ext
+            ));
+            commands.push(format!("scp {} user@{}:/tmp/marionette/", tar_name, ssh_host));
+            commands.push(format!(
+                "# On target: docker run --rm -v {}:/data -v /tmp/marionette:/in alpine {} /in/{}_{}{} -C /data",
+                tgt, tar_create, migration_id, vol.name, ext
+            ));
+            commands.push(String::new());
+        } else {
+            commands.push(format!(
+                "# Volume '{}' uses driver '{}' ({}) — recreate on target with docker volume create",
+                vol.name, vol.driver, vol.driver_category
+            ));
+            commands.push(format!(
+                "# ssh user@{} \"docker volume create --driver {} --name {}\"",
+                ssh_host, vol.driver, tgt
+            ));
+        }
+    }
+}
+
+// ── Rsync over SSH ───────────────────────────────────────────────
+
+fn build_rsync_commands(
+    commands: &mut Vec<String>,
+    volumes: &[MigrationVolume],
+    _migration_id: &str,
+    ssh_host: &str,
+    compression: &str,
+    overrides: &HashMap<String, VolumeOverride>,
+) {
+    let (tar_flag, _ext) = compression_flag(compression);
+    let tar_flag = if tar_flag.is_empty() { "cf" } else if tar_flag == "czf" { "czf" } else { tar_flag };
+
+    commands.push("# === RSYNC-STYLE TRANSFER via SSH ===".to_string());
+    commands.push(format!("# On source host:"));
+    commands.push(String::new());
+
+    for vol in volumes {
+        if overrides.get(&vol.name).map_or(false, |o| o.skip) {
+            commands.push(format!("# Volume '{}' skipped", vol.name));
+            continue;
+        }
+        let tgt = vol_target_name(vol, overrides);
+
+        if vol.driver_category == "filesystem" || vol.driver_category == "unknown" || vol.driver_category == "ephemeral" {
+            commands.push(format!("# Transfer volume: {} (→ {})", vol.name, tgt));
+            commands.push(format!(
+                "docker run --rm -v {}:/data alpine:latest tar {} - -C /data . | \\\\",
+                vol.name, tar_flag
+            ));
+            commands.push(format!(
+                "  ssh user@{} \"docker run --rm -i -v {}:/data alpine:latest tar x{} - -C /data\"",
+                ssh_host, tgt,
+                if compression == "none" { "" } else { "f" }
+            ));
+            commands.push(String::new());
+        } else {
+            commands.push(format!(
+                "# Volume '{}' uses driver '{}' ({}) — recreate on target",
+                vol.name, vol.driver, vol.driver_category
+            ));
+            commands.push(format!(
+                "# ssh user@{} \"docker volume create --driver {} --name {}\"",
+                ssh_host, vol.driver, tgt
+            ));
+        }
+    }
+}
+
+// ── Pipe Direct ──────────────────────────────────────────────────
+
+fn build_pipe_commands(
+    commands: &mut Vec<String>,
+    volumes: &[MigrationVolume],
+    _migration_id: &str,
+    ssh_host: &str,
+    compression: &str,
+    overrides: &HashMap<String, VolumeOverride>,
+) {
+    let (tar_flag, _ext) = compression_flag(compression);
+    let tar_flag = if tar_flag.is_empty() { "cf" } else if tar_flag == "czf" { "czf" } else { tar_flag };
+
+    commands.push("# === PIPE-DIRECT TRANSFER ===".to_string());
+    commands.push(format!("# On source host:"));
+    commands.push(String::new());
+
+    for vol in volumes {
+        if overrides.get(&vol.name).map_or(false, |o| o.skip) {
+            commands.push(format!("# Volume '{}' skipped", vol.name));
+            continue;
+        }
+        let tgt = vol_target_name(vol, overrides);
+
+        if vol.driver_category == "filesystem" || vol.driver_category == "unknown" || vol.driver_category == "ephemeral" {
+            commands.push(format!("# Pipe volume: {} (→ {})", vol.name, tgt));
+            commands.push(format!(
+                "docker run --rm -v {}:/data alpine:latest tar {} - -C /data . | \\\\",
+                vol.name, tar_flag
+            ));
+            commands.push(format!(
+                "  ssh user@{} \"docker run --rm -i -v {}:/data alpine:latest tar x{} - -C /data\"",
+                ssh_host, tgt,
+                if compression == "none" { "" } else { "f" }
+            ));
+            commands.push(String::new());
+        } else {
+            commands.push(format!(
+                "# Volume '{}' uses driver '{}' ({}) — recreate on target",
+                vol.name, vol.driver, vol.driver_category
+            ));
+            commands.push(format!(
+                "# ssh user@{} \"docker volume create --driver {} --name {}\"",
+                ssh_host, vol.driver, tgt
+            ));
+        }
+    }
+}
+
+// ── Export to S3 ─────────────────────────────────────────────────
+
+fn build_s3_commands(
+    commands: &mut Vec<String>,
+    volumes: &[MigrationVolume],
+    migration_id: &str,
+    ssh_host: &str,
+    compression: &str,
+    overrides: &HashMap<String, VolumeOverride>,
+) {
+    let (tar_flag, ext) = compression_flag(compression);
+    let tar_create = if tar_flag.is_empty() {
+        format!("tar cf")
+    } else if tar_flag == "czf" {
+        "tar czf".to_string()
+    } else {
+        format!("tar {}", tar_flag)
+    };
+
+    commands.push("# === EXPORT TO S3 ===".to_string());
+    commands.push("# Requires: aws CLI installed and configured with s3:PutObject/s3:GetObject permissions".to_string());
+    commands.push(format!("# Set S3_BUCKET env var or replace {{bucket}} below"));
+    commands.push(String::new());
+
+    for vol in volumes {
+        if overrides.get(&vol.name).map_or(false, |o| o.skip) {
+            commands.push(format!("# Volume '{}' skipped", vol.name));
+            continue;
+        }
+        let tgt = vol_target_name(vol, overrides);
+
+        if vol.driver_category == "filesystem" || vol.driver_category == "unknown" || vol.driver_category == "ephemeral" {
+            let tar_name = format!("/tmp/marionette/{}_{}{}", migration_id, vol.name, ext);
+            let s3_key = format!("marionette/{}_{}{}", migration_id, vol.name, ext);
+            commands.push(format!("# Export volume: {} (→ {})", vol.name, tgt));
+            commands.push("# === On source host ===".to_string());
+            commands.push(format!(
+                "docker run --rm -v {}:/data -v /tmp/marionette:/out alpine:latest \\\\",
+                vol.name
+            ));
+            commands.push(format!(
+                "  {} /out/{}_{}{} -C /data .",
+                tar_create, migration_id, vol.name, ext
+            ));
+            commands.push(format!("aws s3 cp {} s3://{{bucket}}/{}", tar_name, s3_key));
+            commands.push(String::new());
+            commands.push("# === On target host ===".to_string());
+            commands.push(format!("aws s3 cp s3://{{bucket}}/{} /tmp/marionette/{}_{}{}", s3_key, migration_id, vol.name, ext));
+            commands.push(format!(
+                "docker run --rm -v {}:/data -v /tmp/marionette:/in alpine {} /in/{}_{}{} -C /data",
+                tgt, tar_create, migration_id, vol.name, ext
+            ));
+            commands.push(String::new());
+        } else {
+            commands.push(format!(
+                "# Volume '{}' uses driver '{}' ({}) — recreate on target",
+                vol.name, vol.driver, vol.driver_category
+            ));
+            commands.push(format!(
+                "# ssh user@{} \"docker volume create --driver {} --name {}\"",
+                ssh_host, vol.driver, tgt
+            ));
+        }
+    }
 }
