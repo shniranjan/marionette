@@ -7,18 +7,15 @@ services:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./stacks:/stacks
-      - ./data:/data
-      # Persist auto-generated TLS cert across restarts (optional)
-      - ./certs:/app/certs
+      - /home/niranjan/dockerComposer:/stacks
+      - /srv/docker_config/marionette/data:/data
+      # Persist TLS certs (endpoint client certs + gateway auto-TLS)
+      - /srv/docker_config/marionette/certs:/app/certs
     environment:
       - MARIONETTE_KEY=${MARIONETTE_KEY:-}
       - MARIONETTE_STACKS_DIR=${MARIONETTE_STACKS_DIR:-/stacks}
       - MARIONETTE_LOG_LEVEL=${MARIONETTE_LOG_LEVEL:-info}
       - MARIONETTE_DB_PATH=${MARIONETTE_DB_PATH:-/data/marionette.db}
-      # To use your own TLS cert, set these:
-      # - TLS_KEY=/path/to/key.pem
-      # - TLS_CERT=/path/to/cert.pem
     restart: unless-stopped
     networks:
       - marionette-net
