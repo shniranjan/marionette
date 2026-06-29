@@ -93,7 +93,20 @@ pub fn classify_driver(driver: &str) -> (&'static str, &'static str) {
         "rclone" => ("cloud", "reconnect"),
         "rexray" | "cloudstor" => ("cloud_block", "reconnect"),
         "glusterfs" => ("distributed", "reconnect"),
+        "btrfs" | "zfs" => ("filesystem", "transfer"),
+        "overlay" | "tmpfs" => ("ephemeral", "transfer"),
         _ => ("unknown", "warn"),
+    }
+}
+
+/// Suggest a default transfer method based on the volume driver type.
+pub fn suggest_transfer_method(driver: &str) -> &'static str {
+    match driver {
+        "nfs" | "cifs" | "smb" => "export-s3",
+        "btrfs" | "zfs" => "rsync-over-ssh",
+        "local" | "local-persist" => "scp",
+        "overlay" | "tmpfs" => "pipe-direct",
+        _ => "rsync-over-ssh",
     }
 }
 

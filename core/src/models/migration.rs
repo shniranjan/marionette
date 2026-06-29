@@ -30,6 +30,8 @@ pub struct MigrationVolume {
     pub size_bytes: Option<u64>,
     pub shared: bool,
     pub transfer_method: String,
+    pub default_transfer_method: String,
+    pub options: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::docker::{classify_driver, human_bytes};
+use crate::docker::{classify_driver, human_bytes, suggest_transfer_method};
 use crate::helpers;
 use crate::models::*;
 
@@ -219,8 +219,8 @@ async fn build_migration_plan(
                         .unwrap_or_else(|| "local".to_string());
                     let (category, _advice) = classify_driver(&driver);
 
-                    // Fetch volume details for size
-                    let vol_size = match source_docker.inspect_volume(vol_name).await {
+                    // Fetch volume details for size and options
+                    let (vol_size, vol_opts) = match source_docker.inspect_volume(vol_name).await {
                         Ok(vol_info) => {
                             let size = vol_info
                                 .usage_data
@@ -234,9 +234,30 @@ async fn build_migration_plan(
                                     human_bytes(size)
                                 ));
                             }
-                            Some(size)
+
+                            // Extract volume options (driver opts + labels)
+                            let opts = {
+                                let mut map = serde_json::Map::new();
+                                if !vol_info.options.is_empty() {
+                                    let mut opt_map = serde_json::Map::new();
+                                    for (k, v) in &vol_info.options {
+                                        opt_map.insert(k.clone(), serde_json::Value::String(v.clone()));
+                                    }
+                                    map.insert("driverOpts".to_string(), serde_json::Value::Object(opt_map));
+                                }
+                                if !vol_info.labels.is_empty() {
+                                    let mut label_map = serde_json::Map::new();
+                                    for (k, v) in &vol_info.labels {
+                                        label_map.insert(k.clone(), serde_json::Value::String(v.clone()));
+                                    }
+                                    map.insert("labels".to_string(), serde_json::Value::Object(label_map));
+                                }
+                                if map.is_empty() { None } else { Some(serde_json::Value::Object(map)) }
+                            };
+
+                            (Some(size), opts)
                         }
-                        Err(_) => None,
+                        Err(_) => (None, None),
                     };
 
                     if let Some(size) = vol_size {
@@ -249,6 +270,9 @@ async fn build_migration_plan(
                         transfer_method.to_string()
                     };
 
+                    let default_method =
+                        suggest_transfer_method(&driver).to_string();
+
                     volumes.push(MigrationVolume {
                         name: vol_name.clone(),
                         driver: driver.clone(),
@@ -256,6 +280,8 @@ async fn build_migration_plan(
                         size_bytes: vol_size,
                         shared: false,
                         transfer_method: vol_transfer_method,
+                        default_transfer_method: default_method,
+                        options: vol_opts.clone(),
                     });
                 }
             } else if mount_type == "bind" {
