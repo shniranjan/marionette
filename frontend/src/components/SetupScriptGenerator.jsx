@@ -73,7 +73,7 @@ chmod 400 client-key.pem
 rm client.csr extfile-client.cnf ca.srl 2>/dev/null || true
 
 # ── Step 5: Update Docker daemon configuration ─────────────────────────────
-echo "[5/6] Configuring Docker daemon..."
+echo "[5/7] Configuring Docker daemon..."
 
 # Read existing daemon.json or create new one
 if [ -f "$DAEMON_JSON" ]; then
@@ -110,6 +110,21 @@ echo "  Restarting Docker daemon..."
 systemctl restart docker
 sleep 2
 systemctl status docker --no-pager | head -5
+
+# ── Step 5b: Open firewall port ──────────────────────────────────────────
+echo ""
+echo "[5b/7] Opening firewall port ${dockerPort}..."
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
+  ufw allow ${dockerPort}/tcp comment 'Docker TLS API'
+  ufw reload
+  echo "  Opened ${dockerPort}/tcp via ufw"
+elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -q 'running'; then
+  firewall-cmd --permanent --add-port=${dockerPort}/tcp
+  firewall-cmd --reload
+  echo "  Opened ${dockerPort}/tcp via firewalld"
+else
+  echo "  No active firewall detected — ensure port ${dockerPort} is open manually"
+fi
 
 # ── Step 6: Copy client certs for the user ──────────────────────────────────
 echo ""
