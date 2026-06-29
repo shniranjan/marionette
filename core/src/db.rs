@@ -27,7 +27,7 @@ impl Database {
              PRAGMA foreign_keys=ON;"
         ).expect("Failed to set PRAGMAs");
 
-        // ── Schema: create all tables ─────────────────────────────────
+        // Schema: create all tables
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS endpoints (
                 id TEXT PRIMARY KEY,
@@ -37,9 +37,6 @@ impl Database {
                 tags TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL
             );
-
-            -- Migrate: add cert_path column (introduced v0.2.2)
-            ALTER TABLE endpoints ADD COLUMN cert_path TEXT;
 
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -84,6 +81,10 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
             CREATE INDEX IF NOT EXISTS idx_routes_path ON routes(path);"
         ).expect("Failed to create schema");
+
+        // Idempotent migration: add cert_path column (v0.2.2)
+        // Ignore error if column already exists (restart safety)
+        conn.execute("ALTER TABLE endpoints ADD COLUMN cert_path TEXT", []).ok();
 
         tracing::info!("Database initialized at {}", db_path);
 
