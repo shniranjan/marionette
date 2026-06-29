@@ -220,6 +220,9 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                 <th>Transfer Method</th>
                 <th>Suggestion</th>
                 <th>Custom Path</th>
+                <th>Target Name</th>
+                <th>Target Path</th>
+                <th>Skip</th>
               </tr>
             </thead>
             <tbody>
@@ -227,8 +230,9 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                 const override = volumeOverrides[v.name] || {};
                 const defaultMethod = v.defaultTransferMethod || 'rsync-over-ssh';
                 const defaultMethodLabel = TRANSFER_METHODS.find(m => m.id === defaultMethod)?.label || defaultMethod;
+                const isSkipped = override.skip || false;
                 return (
-                  <tr key={v.name}>
+                  <tr key={v.name} style={{ opacity: isSkipped ? 0.4 : 1 }}>
                     <td className="mono" style={{ fontWeight: 500 }}>{v.name}</td>
                     <td className="mono" style={{ fontSize: '0.8rem' }}>
                       {v.sizeBytes ? `${(v.sizeBytes / 1073741824).toFixed(1)} GB` : '—'}
@@ -238,6 +242,7 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                         value={override.transferMethod || defaultMethod}
                         onChange={(e) => handleVolumeOverride(v.name, 'transfer_method', e.target.value)}
                         style={{ fontSize: '0.75rem', padding: '4px 8px' }}
+                        disabled={isSkipped}
                       >
                         <option value="inherit">Inherit ({v.transferMethod || transferMethod})</option>
                         {TRANSFER_METHODS.map(m => (
@@ -262,7 +267,36 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                         value={override.custom_path || ''}
                         onChange={(e) => handleVolumeOverride(v.name, 'custom_path', e.target.value)}
                         placeholder="Default path"
-                        style={{ fontSize: '0.75rem', padding: '4px 8px', width: '150px' }}
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', width: '120px' }}
+                        disabled={isSkipped}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={override.target_name || ''}
+                        onChange={(e) => handleVolumeOverride(v.name, 'target_name', e.target.value)}
+                        placeholder={v.name}
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', width: '120px' }}
+                        disabled={isSkipped}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={override.target_path || ''}
+                        onChange={(e) => handleVolumeOverride(v.name, 'target_path', e.target.value)}
+                        placeholder="Same as source"
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', width: '120px' }}
+                        disabled={isSkipped}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={isSkipped}
+                        onChange={(e) => handleVolumeOverride(v.name, 'skip', e.target.checked)}
+                        style={{ accentColor: 'var(--red)', width: '16px', height: '16px', cursor: 'pointer' }}
                       />
                     </td>
                   </tr>

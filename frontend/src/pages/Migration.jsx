@@ -140,6 +140,7 @@ export default function Migration({ navigate }) {
   const [transferMethod, setTransferMethod] = useState('rsync-over-ssh');
   const [compression, setCompression] = useState('pigz');
   const [postOptions, setPostOptions] = useState({});
+  const [volumeOverrides, setVolumeOverrides] = useState({});
 
   // Step 4 — Credentials
   const [credentialsRevealed, setCredentialsRevealed] = useState({});
@@ -248,6 +249,7 @@ export default function Migration({ navigate }) {
     if (s.transferMethod) setTransferMethod(s.transferMethod);
     if (s.compression) setCompression(s.compression);
     if (s.post_options) setPostOptions(s.post_options);
+    if (s.volume_overrides) setVolumeOverrides(s.volume_overrides);
   }, []);
 
   const handleProceedFromStrategy = () => {
@@ -327,6 +329,7 @@ export default function Migration({ navigate }) {
         post_options: postOptions,
         connection_resolutions: connectionResolutions,
         target_stack_name: targetStackName || undefined,
+        volume_overrides: volumeOverrides,
       });
       setDryRunResult(result.plan);
       setMigrationPlan(result.plan);
