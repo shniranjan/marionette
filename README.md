@@ -10,10 +10,13 @@ A centralized Docker infrastructure management platform. Manage containers, imag
 ## Quick Start
 
 ```bash
-# Clone and build
+# Pull and run
+docker compose up -d
+
+# Or build from source
 git clone https://github.com/shniranjan/marionette.git
 cd marionette
-docker compose up -d --build
+docker compose -f docker-compose.yml up -d --build
 
 # HTTPS on port 8443 (self-signed cert on first run)
 # HTTP on port 8000 → redirects to HTTPS automatically
@@ -27,8 +30,7 @@ With docker-compose:
 ```yaml
 services:
   marionette:
-    build: .
-    image: marionette:local
+    image: ghcr.io/shniranjan/marionette:v0.4.0
     container_name: marionette
     ports:
       - "8000:8000"     # HTTP → 301 redirect to HTTPS
