@@ -12,11 +12,39 @@ const NAV_ITEMS = [
   { id: 'nginx', label: 'Nginx LB', icon: '⚖️' },
   { id: 'stacks', label: 'Stacks', icon: '📚' },
   { id: 'routes', label: 'Routes', icon: '🔀' },
+  { id: 'templates', label: 'Templates', icon: '📋' },
   { id: 'migration', label: 'Migration', icon: '🚚' },
   { id: 'system', label: 'System', icon: '⚙' },
 ];
 
-export default function Sidebar({ currentPage, onNavigate, currentEndpoint, onEndpointChange }) {
+const RECENT_ICONS = {
+  containers: '📦',
+  containerDetail: '📦',
+  images: '🖼',
+  volumes: '💾',
+  networks: '🌐',
+  stacks: '📚',
+  swarm: '🐝',
+  nginx: '⚖️',
+  routes: '🔀',
+  templates: '📋',
+  system: '⚙',
+};
+
+function timeAgo(ts) {
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60) return 'now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const d = Math.floor(hr / 24);
+  return `${d}d`;
+}
+
+export default function Sidebar({ currentPage, onNavigate, currentEndpoint, onEndpointChange, recents = [] }) {
+  const hasRecents = recents.length > 0;
+
   return (
     <aside style={{
       width: '220px',
@@ -87,6 +115,80 @@ export default function Sidebar({ currentPage, onNavigate, currentEndpoint, onEn
           );
         })}
       </nav>
+
+      {/* Recently Viewed */}
+      {hasRecents && (
+        <div style={{
+          borderTop: '1px solid var(--border)',
+          padding: '8px',
+          maxHeight: '180px',
+          overflowY: 'auto',
+        }}>
+          <div style={{
+            fontSize: '0.65rem',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            color: 'var(--text-secondary)',
+            padding: '4px 8px 6px',
+            fontWeight: 600,
+          }}>
+            Recently Viewed
+          </div>
+          {recents.slice(0, 5).map((r, i) => {
+            const pageForNav = r.type === 'containerDetail' ? 'containerDetail' : r.type;
+            const active = currentPage === r.type &&
+              (r.type !== 'containerDetail' || !r.id ||
+                (currentPage === 'containerDetail'));
+            return (
+              <button
+                key={`${r.type}-${r.id || ''}-${i}`}
+                onClick={() => onNavigate(pageForNav, r.id ? { id: r.id, name: r.name } : {})}
+                title={`${r.name} · ${timeAgo(r.timestamp)}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  width: '100%',
+                  padding: '5px 8px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  background: active ? 'var(--bg-tertiary)' : 'transparent',
+                  color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '0.75rem',
+                  marginBottom: '1px',
+                  transition: 'all 0.1s',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+                onMouseEnter={(e) => {
+                  if (!active) e.currentTarget.style.background = 'var(--bg-tertiary)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>
+                  {RECENT_ICONS[r.type] || '📄'}
+                </span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {r.name.length > 16 ? r.name.substring(0, 14) + '…' : r.name}
+                </span>
+                <span style={{
+                  marginLeft: 'auto',
+                  fontSize: '0.6rem',
+                  color: 'var(--text-secondary)',
+                  flexShrink: 0,
+                }}>
+                  {timeAgo(r.timestamp)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Theme switcher at bottom */}
       <div style={{ padding: '12px', borderTop: '1px solid var(--border)' }}>

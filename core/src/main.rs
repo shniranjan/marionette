@@ -103,6 +103,7 @@ async fn main() {
         .route("/containers/{id}", delete(routes::containers::remove_container))
         .route("/containers/{id}/rename", post(routes::containers::rename_container))
         .route("/containers/{id}/logs", get(ws::logs::container_logs_ws))
+        .route("/containers/logs/merged", get(ws::merged_logs::merged_logs_ws))
         .route("/containers/{id}/logs/download", get(ws::logs::download_logs))
         .route("/containers/{id}/stats", get(ws::stats::container_stats_ws))
         .route("/containers/batch", post(routes::containers::batch_containers))
@@ -137,6 +138,7 @@ async fn main() {
         .route("/stacks/{name}/down", post(routes::stacks::down_stack))
         .route("/stacks/{name}/env", get(routes::stacks::get_stack_env))
         .route("/stacks/{name}/env", put(routes::stacks::save_stack_env))
+        .route("/stacks/{name}/validate", post(routes::stacks::validate_stack))
         .route("/stacks/{name}/deploy/stream", get(ws::deploy::deploy_stream_ws))
         // System
         .route("/system", get(routes::system::system_info))
@@ -194,6 +196,12 @@ async fn main() {
         .route("/routes/{id}/access/{user_id}", delete(routes_config::revoke_route_access))
         // Users
         .route("/users", get(users::list_users))
+        // Templates
+        .route("/api/templates", get(routes::templates::list_templates))
+        .route("/api/templates", post(routes::templates::create_template))
+        .route("/api/templates/{id}", get(routes::templates::get_template))
+        .route("/api/templates/{id}", delete(routes::templates::delete_template))
+        .route("/api/templates/{id}/deploy", post(routes::templates::deploy_template))
         // Migration
         .route("/migration/analyze", post(migration::analyze_migration))
         .route("/migration/plan", post(migration::plan_migration))

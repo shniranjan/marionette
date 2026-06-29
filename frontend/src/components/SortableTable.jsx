@@ -10,6 +10,7 @@ export default function SortableTable({
   onToggleAll,
   allSelected,
   emptyMessage = 'No items',
+  fav,
 }) {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState(null);
@@ -50,6 +51,7 @@ export default function SortableTable({
   };
 
   const hasCheckboxes = selected !== undefined && onToggle !== undefined;
+  const hasFav = fav !== undefined && fav.isFavorite !== undefined;
 
   if (!data || data.length === 0) {
     return (
@@ -74,6 +76,9 @@ export default function SortableTable({
                   />
                 )}
               </th>
+            )}
+            {hasFav && (
+              <th style={{ width: '1%' }}></th>
             )}
             {columns.map((col) => (
               <th
@@ -106,6 +111,31 @@ export default function SortableTable({
                     checked={selected.has(row[keyField])}
                     onChange={() => onToggle(row[keyField])}
                   />
+                </td>
+              )}
+              {hasFav && (
+                <td onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => fav.onToggle(row[keyField], row.name)}
+                    title={fav.isFavorite(row[keyField]) ? 'Unpin' : 'Pin to favorites'}
+                    style={{
+                      border: 'none',
+                      background: 'none',
+                      cursor: 'pointer',
+                      padding: '2px 4px',
+                      fontSize: '1rem',
+                      lineHeight: 1,
+                      color: fav.isFavorite(row[keyField]) ? '#f0c040' : 'var(--text-secondary)',
+                      opacity: fav.isFavorite(row[keyField]) ? 1 : 0.35,
+                      transition: 'opacity 0.15s, color 0.15s',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.opacity = fav.isFavorite(row[keyField]) ? '1' : '0.35';
+                    }}
+                  >
+                    {fav.isFavorite(row[keyField]) ? '★' : '☆'}
+                  </button>
                 </td>
               )}
               {columns.map((col) => (

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing;
 
-use crate::models::{DockerEndpoint, EndpointStatus, Route, UserRole, UserSummary};
+use crate::models::{DockerEndpoint, EndpointStatus, Route, Template, UserRole, UserSummary};
 
 /// Central database for Marionette — users, endpoints, routes, audit log.
 /// All tables share one SQLite database at the path configured by MARIONETTE_DB_PATH.
@@ -73,6 +73,19 @@ impl Database {
                 target TEXT NOT NULL,
                 detail TEXT NOT NULL,
                 admin_key_hash TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                image TEXT NOT NULL,
+                ports TEXT DEFAULT '[]',
+                env_vars TEXT DEFAULT '{}',
+                volumes TEXT DEFAULT '[]',
+                restart_policy TEXT DEFAULT 'unless-stopped',
+                labels TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
@@ -368,6 +381,104 @@ impl Database {
             rusqlite::params![route_id, user_id],
         )
         .expect("Failed to revoke route access");
+    }
+
+    // ── Templates ─────────────────────────────────────────────────────
+
+    /// List all templates.
+    pub fn list_templates(&self) -> Vec<Template> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare("SELECT id, name, description, image, ports, env_vars, volumes, restart_policy, labels, created_at FROM templates")
+            .expect("Failed to prepare template query");
+        let rows = stmt
+            .query_map([], |row| {
+                let id: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let description: String = row.get(2)?;
+                let image: String = row.get(3)?;
+                let ports: String = row.get(4)?;
+                let env_vars: String = row.get(5)?;
+                let volumes: String = row.get(6)?;
+                let restart_policy: String = row.get(7)?;
+                let labels: String = row.get(8)?;
+                let created_at: String = row.get(9)?;
+                Ok(Template {
+                    id,
+                    name,
+                    description,
+                    image,
+                    ports,
+                    env_vars,
+                    volumes,
+                    restart_policy,
+                    labels,
+                    created_at,
+                })
+            })
+            .expect("Failed to query templates");
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// Get a single template by ID.
+    pub fn get_template(&self, id: &str) -> Option<Template> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare("SELECT id, name, description, image, ports, env_vars, volumes, restart_policy, labels, created_at FROM templates WHERE id = ?1")
+            .expect("Failed to prepare template query");
+        stmt.query_row(rusqlite::params![id], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let description: String = row.get(2)?;
+            let image: String = row.get(3)?;
+            let ports: String = row.get(4)?;
+            let env_vars: String = row.get(5)?;
+            let volumes: String = row.get(6)?;
+            let restart_policy: String = row.get(7)?;
+            let labels: String = row.get(8)?;
+            let created_at: String = row.get(9)?;
+            Ok(Template {
+                id,
+                name,
+                description,
+                image,
+                ports,
+                env_vars,
+                volumes,
+                restart_policy,
+                labels,
+                created_at,
+            })
+        })
+        .ok()
+    }
+
+    /// Save (insert) a template.
+    pub fn save_template(&self, template: &Template) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        conn.execute(
+            "INSERT INTO templates (id, name, description, image, ports, env_vars, volumes, restart_policy, labels, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                template.id,
+                template.name,
+                template.description,
+                template.image,
+                template.ports,
+                template.env_vars,
+                template.volumes,
+                template.restart_policy,
+                template.labels,
+                template.created_at,
+            ],
+        ).expect("Failed to save template");
+    }
+
+    /// Delete a template by ID.
+    pub fn delete_template(&self, id: &str) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        conn.execute("DELETE FROM templates WHERE id = ?1", rusqlite::params![id])
+            .expect("Failed to delete template");
     }
 
     // ── Users (list) ─────────────────────────────────────────────────

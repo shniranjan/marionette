@@ -10,3 +10,4 @@ pub mod swarm;
 pub mod system;
 pub mod routes_config;
 pub mod users;
+pub mod templates;

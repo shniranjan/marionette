@@ -7,10 +7,13 @@ import SecretMask from '../components/SecretMask';
 import ActionBar from '../components/ActionBar';
 import Spinner from '../components/Spinner';
 import StatusBadge from '../components/StatusBadge';
+import Modal from '../components/Modal';
+import { useToast } from '../components/Toast';
 
 const TABS = ['info', 'logs', 'stats', 'env', 'mounts', 'network'];
 
 export default function ContainerDetail({ id, name, navigate }) {
+  const toast = useToast();
   const [inspect, setInspect] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -18,6 +21,10 @@ export default function ContainerDetail({ id, name, navigate }) {
     const h = window.location.hash?.replace('#', '');
     return TABS.includes(h) ? h : 'info';
   });
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -37,6 +44,53 @@ export default function ContainerDetail({ id, name, navigate }) {
   const switchTab = (t) => {
     setTab(t);
     window.location.hash = t;
+  };
+
+  const handleSaveAsTemplate = async () => {
+    if (!templateName.trim()) return;
+    setSaving(true);
+    try {
+      // Convert env array ["KEY=VAL", ...] to object
+      const envObj = {};
+      if (Array.isArray(inspect.env)) {
+        inspect.env.forEach((e) => {
+          const idx = e.indexOf('=');
+          if (idx > 0) envObj[e.substring(0, idx)] = e.substring(idx + 1);
+        });
+      }
+
+      // Map ports from inspect format to template format
+      const portsArr = (inspect.ports || []).map((p) => ({
+        containerPort: p.privatePort || p.containerPort || 0,
+        hostPort: p.publicPort || p.hostPort || 0,
+      }));
+
+      // Map mounts to template volumes format
+      const volsArr = (inspect.mounts || []).map((m) => ({
+        source: m.source || '',
+        destination: m.destination || '',
+        mode: m.mode || 'rw',
+      }));
+
+      await api.post('/api/templates', {
+        name: templateName.trim(),
+        description: templateDesc.trim(),
+        image: inspect.image || '',
+        ports: JSON.stringify(portsArr),
+        envVars: JSON.stringify(envObj),
+        volumes: JSON.stringify(volsArr),
+        restartPolicy: inspect.restartPolicy || 'unless-stopped',
+        labels: JSON.stringify(inspect.labels || {}),
+      });
+      toast.success('Template saved');
+      setShowSaveTemplate(false);
+      setTemplateName('');
+      setTemplateDesc('');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save template');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
@@ -63,6 +117,18 @@ export default function ContainerDetail({ id, name, navigate }) {
           </span>
         </div>
         <ActionBar containerId={id} state={state} onAction={load} />
+        <button
+          className="btn"
+          onClick={() => {
+            setTemplateName(displayName || '');
+            setTemplateDesc('');
+            setShowSaveTemplate(true);
+          }}
+          style={{ marginLeft: '8px' }}
+          title="Save as Template"
+        >
+          💾 Save as Template
+        </button>
       </div>
 
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '16px' }}>
@@ -163,6 +229,29 @@ export default function ContainerDetail({ id, name, navigate }) {
           </div>
         )}
       </div>
+
+      {/* Save as Template Modal */}
+      {showSaveTemplate && (
+        <Modal title="Save as Template" onClose={() => setShowSaveTemplate(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Template Name *</label>
+              <input className="input" value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="my-template" />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Description</label>
+              <input className="input" value={templateDesc} onChange={e => setTemplateDesc(e.target.value)} placeholder="Optional description" />
+            </div>
+            <div className="text-secondary" style={{ fontSize: '0.75rem' }}>
+              Image: <code>{inspect?.image}</code> &nbsp;|&nbsp;
+              Restart: <code>{inspect?.restartPolicy || 'unless-stopped'}</code>
+            </div>
+            <button className="btn btn-primary" onClick={handleSaveAsTemplate} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Template'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

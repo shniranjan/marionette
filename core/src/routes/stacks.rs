@@ -233,3 +233,54 @@ pub async fn create_stack(
         "output": output
     })))
 }
+
+// ── Validate Stack Config ──────────────────────────────────────
+
+pub async fn validate_stack(
+    State(state): State<Arc<crate::AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<StackValidateRequest>,
+) -> ApiResult<StackValidateResponse> {
+    let dir = state.stacks_dir.join(&name);
+
+    // Ensure directory exists
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    // Save content temporarily
+    let file_path = dir.join("docker-compose.yml");
+    tokio::fs::write(&file_path, &body.content)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    // Run docker compose config for validation
+    let output = std::process::Command::new("docker")
+        .args(["compose", "config"])
+        .current_dir(&dir)
+        .output()
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    if output.status.success() {
+        let rendered = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(Json(StackValidateResponse {
+            valid: true,
+            rendered: Some(rendered),
+            errors: None,
+            name,
+        }))
+    } else {
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        let errors: Vec<String> = err_msg
+            .lines()
+            .map(|l| l.to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        Ok(Json(StackValidateResponse {
+            valid: false,
+            rendered: None,
+            errors: Some(errors),
+            name,
+        }))
+    }
+}

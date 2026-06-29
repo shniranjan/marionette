@@ -52,6 +52,12 @@ export default function Stacks() {
   const [editYml, setEditYml] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
+  // ── Validate + Diff state ────────────────────────────────────
+  const [validateResult, setValidateResult] = useState(null); // { valid, rendered, errors }
+  const [validating, setValidating] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
+  const [originalYml, setOriginalYml] = useState('');
+
   // ── Env editor state ────────────────────────────────────────
   const [envVars, setEnvVars] = useState([]);       // [{key, value}, ...]
   const [showEnv, setShowEnv] = useState(false);
@@ -111,6 +117,9 @@ export default function Stacks() {
     try {
       const data = await api.get(`/api/stacks/${name}`);
       setEditYml(data.content || '');
+      setOriginalYml(data.content || '');
+      setValidateResult(null);
+      setShowDiff(false);
       // Load env vars
       try {
         const envData = await api.get(`/api/stacks/${name}/env`);
@@ -146,6 +155,49 @@ export default function Stacks() {
       setEditSaving(false);
     }
   };
+
+  const handleValidate = async () => {
+    if (!showEdit) return;
+    setValidating(true);
+    setValidateResult(null);
+    try {
+      const data = await api.post(`/api/stacks/${showEdit}/validate`, { content: editYml });
+      setValidateResult(data);
+    } catch (err) {
+      setValidateResult({ valid: false, errors: [err.message], name: showEdit });
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // ── Simple line diff ─────────────────────────────────────────
+  const diffLines = useMemo(() => {
+    if (!showDiff || !originalYml) return null;
+    const orig = originalYml.split('\n');
+    const mod = editYml.split('\n');
+    const result = [];
+    const maxLen = Math.max(orig.length, mod.length);
+    // Build a set of lines from original for quick lookup
+    const origSet = new Set(orig);
+    const modSet = new Set(mod);
+    for (let i = 0; i < maxLen; i++) {
+      const oLine = i < orig.length ? orig[i] : null;
+      const mLine = i < mod.length ? mod[i] : null;
+      if (oLine === mLine) {
+        result.push({ type: 'same', orig: oLine, mod: mLine, num: i + 1 });
+      } else if (oLine === null) {
+        result.push({ type: 'added', orig: null, mod: mLine, num: i + 1 });
+      } else if (mLine === null) {
+        result.push({ type: 'removed', orig: oLine, mod: null, num: i + 1 });
+      } else if (modSet.has(oLine) || origSet.has(mLine)) {
+        // Line exists somewhere else — treat as changed
+        result.push({ type: 'changed', orig: oLine, mod: mLine, num: i + 1 });
+      } else {
+        result.push({ type: 'changed', orig: oLine, mod: mLine, num: i + 1 });
+      }
+    }
+    return result;
+  }, [showDiff, originalYml, editYml]);
 
   const handleAction = async (name, action) => {
     try {
@@ -300,6 +352,14 @@ export default function Stacks() {
           footer={
             <>
               <button onClick={() => setShowEdit(null)}>Cancel</button>
+              <button
+                onClick={handleValidate}
+                disabled={validating}
+                title="Validate compose config"
+                style={{ background: validateResult?.valid ? '#1a3a1a' : undefined, color: validateResult?.valid ? '#4caf50' : undefined }}
+              >
+                {validating ? '⏳ Validating...' : '✓ Validate'}
+              </button>
               <button className="btn-primary" onClick={() => handleSave(true)} disabled={editSaving}>
                 {editSaving ? 'Saving...' : 'Save & Deploy'}
               </button>
@@ -309,7 +369,86 @@ export default function Stacks() {
             </>
           }
         >
-          <YamlEditor value={editYml} onChange={setEditYml} fill />
+          <div style={{ marginBottom: '8px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.85rem', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={showDiff}
+                onChange={(e) => setShowDiff(e.target.checked)}
+                style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+              />
+              Show Diff
+            </label>
+          </div>
+
+          {/* Validation result */}
+          {validateResult && (
+            <div style={{
+              marginBottom: '12px',
+              padding: '10px 14px',
+              borderRadius: '6px',
+              background: validateResult.valid ? '#0d2818' : '#3d1010',
+              border: `1px solid ${validateResult.valid ? '#2d7a3a' : '#8b2020'}`,
+              fontSize: '0.85rem',
+            }}>
+              {validateResult.valid ? (
+                <div style={{ color: '#4caf50', fontWeight: 600 }}>
+                  ✅ Config valid
+                </div>
+              ) : (
+                <div>
+                  <div style={{ color: '#f44336', fontWeight: 600, marginBottom: '6px' }}>
+                    ❌ Validation errors:
+                  </div>
+                  {(validateResult.errors || []).map((err, i) => (
+                    <div key={i} style={{ color: '#ffab91', fontSize: '0.8rem', marginBottom: '2px', fontFamily: 'monospace' }}>
+                      {err}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {showDiff && diffLines ? (
+            <div style={{
+              border: '1px solid #333',
+              borderRadius: '4px',
+              overflow: 'auto',
+              maxHeight: '400px',
+              marginBottom: '12px',
+              fontFamily: 'monospace',
+              fontSize: '0.8rem',
+              lineHeight: '1.5',
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <tbody>
+                  {diffLines.map((line, i) => {
+                    let bg = 'transparent';
+                    let prefix = ' ';
+                    if (line.type === 'added') { bg = '#0d3320'; prefix = '+'; }
+                    else if (line.type === 'removed') { bg = '#3d1010'; prefix = '-'; }
+                    else if (line.type === 'changed') { bg = '#2a2a10'; prefix = '~'; }
+                    return (
+                      <tr key={i} style={{ background: bg }}>
+                        <td style={{ width: '40px', textAlign: 'right', padding: '0 8px', color: '#555', borderRight: '1px solid #333' }}>
+                          {line.num}
+                        </td>
+                        <td style={{ width: '20px', textAlign: 'center', color: line.type === 'added' ? '#4caf50' : line.type === 'removed' ? '#f44336' : line.type === 'changed' ? '#ffc107' : '#555' }}>
+                          {prefix}
+                        </td>
+                        <td style={{ padding: '0 8px', color: '#ccc', whiteSpace: 'pre', textDecoration: line.type === 'removed' ? 'line-through' : undefined }}>
+                          {line.type === 'removed' ? line.orig : line.mod}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <YamlEditor value={editYml} onChange={setEditYml} fill />
+          )}
 
           {/* Env editor */}
           <details open={showEnv} onToggle={(e) => setShowEnv(e.target.open)} style={{ marginTop: '20px' }}>
