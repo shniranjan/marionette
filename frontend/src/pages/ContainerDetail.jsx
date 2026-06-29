@@ -153,13 +153,6 @@ export default function ContainerDetail({ id, name, navigate }) {
 
   const labelEntries = editLabels ? Object.entries(editLabels) : [];
 
-  if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
-  if (error) return <div className="text-danger">Error: {error}</div>;
-  if (!inspect) return <div className="text-secondary">No data</div>;
-
-  const displayName = (name || inspect.name || id || '').replace(/^\//, '');
-  const state = inspect.state || 'unknown';
-
   // Build open-in-browser link if any common web port is exposed
   const webLink = useMemo(() => {
     const WEB_PORTS = new Set([80, 443, 8080, 3000, 8000, 8443]);
@@ -170,6 +163,13 @@ export default function ContainerDetail({ id, name, navigate }) {
     const protocol = web.privatePort === 443 || web.privatePort === 8443 ? 'https' : 'http';
     return `${protocol}://${window.location.hostname}:${publicPort}`;
   }, [inspect]);
+
+  if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
+  if (error) return <div className="text-danger">Error: {error}</div>;
+  if (!inspect) return <div className="text-secondary">No data</div>;
+
+  const displayName = (name || inspect.name || id || '').replace(/^\//, '');
+  const state = inspect.state || 'unknown';
 
   // Extract stack name from Docker Compose labels
   const composeProject = inspect?.labels?.['com.docker.compose.project'] ||
