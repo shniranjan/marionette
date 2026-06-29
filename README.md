@@ -17,7 +17,7 @@ docker compose up -d --build
 
 # HTTPS on port 8443 (self-signed cert on first run)
 # HTTP on port 8000 → redirects to HTTPS automatically
-# Open https://localhost:8443
+# Open https://localhost:8443 (or https://<your-server-ip>:8443)
 ```
 
 > **TLS is automatic.** On first start, Marionette generates a self-signed certificate. Your browser will show a warning — accept it on LAN. Mount your own cert at `./certs/` to override.
