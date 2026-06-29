@@ -73,7 +73,7 @@ export default function ContainerDetail({ id, name, navigate }) {
       }
 
       // Map ports from inspect format to template format
-      const portsArr = (inspect.ports || []).map((p) => ({
+      const portsArr = (inspect?.ports || []).map((p) => ({
         containerPort: p.privatePort || p.containerPort || 0,
         hostPort: p.publicPort || p.hostPort || 0,
       }));
@@ -156,7 +156,7 @@ export default function ContainerDetail({ id, name, navigate }) {
   // Build open-in-browser link if any common web port is exposed
   const webLink = useMemo(() => {
     const WEB_PORTS = new Set([80, 443, 8080, 3000, 8000, 8443]);
-    const ports = inspect.ports || [];
+    const ports = inspect?.ports || [];
     const web = ports.find((p) => WEB_PORTS.has(p.privatePort));
     if (!web) return null;
     const publicPort = web.publicPort || web.privatePort;
