@@ -41,6 +41,7 @@ function StatusBadge({ status }) {
 
 export default function Stacks() {
   const [stacks, setStacks] = useState([]);
+  const [containers, setContainers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -64,14 +65,17 @@ export default function Stacks() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api.get('/api/stacks');
-      const raw = Array.isArray(data) ? data : (data?.stacks || []);
-      // Normalize: ensure lowercase status field for useFilters
+      const [stacksData, containersData] = await Promise.all([
+        api.get('/api/stacks'),
+        api.get('/api/containers'),
+      ]);
+      const raw = Array.isArray(stacksData) ? stacksData : (stacksData?.stacks || []);
       const normalized = raw.map(s => ({
         ...s,
         status: (s.Status || s.status || 'unknown').toLowerCase(),
       }));
       setStacks(normalized);
+      setContainers(Array.isArray(containersData) ? containersData : []);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -276,6 +280,12 @@ export default function Stacks() {
             const isRunning = status === 'running';
             const selKey = stack.id || name;
             const isSel = selected.has(selKey);
+
+            // Find containers belonging to this stack
+            const stackContainers = containers.filter(c =>
+              (c.stack || c.Stack || '') === name
+            );
+            const runningContainers = stackContainers.filter(c => c.state === 'running');
             return (
               <div key={name} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -290,6 +300,22 @@ export default function Stacks() {
                     <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
                       Services: {svcCount} &nbsp;|&nbsp;
                       <StatusBadge status={status} />
+                      {stackContainers.length > 0 && (
+                        <span style={{ marginLeft: '8px' }}>
+                          {' '}Containers: {runningContainers.length}/{stackContainers.length}
+                          {' '}
+                          {stackContainers.slice(0, 4).map(c => (
+                            <code key={c.id || c.Id} style={{ fontSize: '0.7rem', marginRight: '4px' }}>
+                              {c.name || c.Name}
+                            </code>
+                          ))}
+                          {stackContainers.length > 4 && (
+                            <span style={{ fontSize: '0.7rem', color: 'var(--pico-muted-color)' }}>
+                              +{stackContainers.length - 4} more
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
