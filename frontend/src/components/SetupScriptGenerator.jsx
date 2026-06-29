@@ -30,20 +30,20 @@ echo "=== Marionette Remote Docker Setup ==="
 echo ""
 
 # ── Step 1: Create cert directory ──────────────────────────────────────────
-echo "[1/6] Creating certificate directory: $CERTS_DIR"
+echo "[1/7] Creating certificate directory: $CERTS_DIR"
 mkdir -p "$CERTS_DIR"
 chmod 700 "$CERTS_DIR"
 cd "$CERTS_DIR"
 
 # ── Step 2: Generate CA ────────────────────────────────────────────────────
-echo "[2/6] Generating Certificate Authority (CA)..."
+echo "[2/7] Generating Certificate Authority (CA)..."
 openssl genrsa -aes256 -passout pass:marionette-ca -out ca-key.pem 4096
 openssl req -new -x509 -days 3650 -key ca-key.pem -sha256 -passin pass:marionette-ca \\
   -subj "/CN=Marionette-CA" -out ca.pem
 chmod 400 ca-key.pem
 
 # ── Step 3: Generate server certificate ────────────────────────────────────
-echo "[3/6] Generating server certificate..."
+echo "[3/7] Generating server certificate..."
 openssl genrsa -out server-key.pem 4096
 openssl req -new -key server-key.pem -sha256 \\
   -subj "/CN=$HOST_IP" -out server.csr
@@ -59,7 +59,7 @@ chmod 400 server-key.pem
 rm server.csr extfile.cnf ca.srl 2>/dev/null || true
 
 # ── Step 4: Generate client certificate ────────────────────────────────────
-echo "[4/6] Generating client certificate..."
+echo "[4/7] Generating client certificate..."
 openssl genrsa -out client-key.pem 4096
 openssl req -new -key client-key.pem -sha256 \\
   -subj "/CN=marionette-client" -out client.csr
