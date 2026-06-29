@@ -10,15 +10,35 @@ import FilterBar from '../components/FilterBar';
 import Modal from '../components/Modal';
 import MultiLogViewer from '../components/MultiLogViewer';
 
+const WEB_PORTS = new Set([80, 443, 8080, 3000, 8000, 8443]);
+
 function renderPorts(ports) {
   if (!ports || !Array.isArray(ports) || ports.length === 0) {
     return <span className="text-secondary">—</span>;
   }
-  return ports.map((p, i) => (
-    <span key={i} className="mono" style={{ fontSize: '0.7rem', marginRight: '6px' }}>
-      {p.publicPort ? `${p.publicPort}:${p.privatePort}` : p.privatePort}
-    </span>
-  ));
+  const host = window.location.hostname;
+  return ports.map((p, i) => {
+    const publicPort = p.publicPort || p.privatePort;
+    const isWeb = WEB_PORTS.has(p.privatePort);
+    const label = p.publicPort ? `${p.publicPort}:${p.privatePort}` : String(p.privatePort);
+    return (
+      <span key={i} className="mono" style={{ fontSize: '0.7rem', marginRight: '6px', whiteSpace: 'nowrap' }}>
+        {isWeb ? (
+          <span style={{ cursor: 'pointer' }} title={`Open http://${host}:${publicPort}`}>
+            <a
+              href={`http://${host}:${publicPort}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ textDecoration: 'none' }}
+            >
+              {label} <span style={{ fontSize: '0.65rem' }}>🔗</span>
+            </a>
+          </span>
+        ) : label}
+      </span>
+    );
+  });
 }
 
 export default function Containers({ navigate }) {
@@ -42,6 +62,7 @@ export default function Containers({ navigate }) {
         status: c.status || c.Status || '',
         ports: c.ports || c.Ports || [],
         health: c.health || null,
+        labels: c.labels || null,
       }));
       setContainers(items);
       setError(null);
@@ -192,6 +213,30 @@ export default function Containers({ navigate }) {
       label: 'Ports',
       sortable: false,
       render: (ports) => renderPorts(ports),
+    },
+    {
+      key: 'labels',
+      label: 'Labels',
+      sortable: false,
+      render: (labels) => {
+        if (!labels || Object.keys(labels).length === 0) return <span className="text-secondary">—</span>;
+        const displayKeys = ['project', 'env', 'environment', 'app', 'service', 'role', 'tier', 'version'];
+        const found = [];
+        // First show known keys, then any others (up to 4 total)
+        const entries = Object.entries(labels);
+        for (const dk of displayKeys) {
+          const match = entries.find(([k]) => k === dk);
+          if (match) found.push(match);
+        }
+        for (const [k, v] of entries) {
+          if (!found.some(([fk]) => fk === k)) found.push([k, v]);
+        }
+        return found.slice(0, 4).map(([k, v]) => (
+          <span key={k} className="mono" style={{ fontSize: '0.65rem', marginRight: '4px', background: 'var(--bg-tertiary)', padding: '1px 5px', borderRadius: '3px', whiteSpace: 'nowrap' }}>
+            {k}={v.length > 12 ? v.slice(0, 12) + '…' : v}
+          </span>
+        ));
+      },
     },
   ];
 
