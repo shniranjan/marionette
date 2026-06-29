@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crate::helpers;
 use crate::models::*;
+use hyperlocal::UnixClientExt;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
 
@@ -122,6 +123,7 @@ pub async fn list_containers(
                 .first()
                 .map(|n| n.trim_start_matches('/').to_string())
                 .unwrap_or_default();
+            let labels = c.labels.unwrap_or_default();
             ContainerSummary {
                 id: c.id.unwrap_or_default(),
                 name,
@@ -130,8 +132,9 @@ pub async fn list_containers(
                 status: c.status.unwrap_or_default(),
                 created: c.created.unwrap_or(0),
                 ports: map_ports_list(&c.ports),
-                stack: extract_stack(&c.labels.unwrap_or_default()),
+                stack: extract_stack(&labels),
                 health: None,
+                labels: Some(labels),
             }
         })
         .collect();
@@ -468,6 +471,108 @@ pub async fn batch_containers(
 #[derive(serde::Deserialize)]
 pub struct RenameBody {
     name: String,
+}
+
+// ── Update Container Labels ───────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct UpdateLabelsBody {
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+pub async fn update_labels(
+    State(state): State<Arc<crate::AppState>>,
+    Path(id): Path<String>,
+    Query(params): Query<EndpointQuery>,
+    Json(body): Json<UpdateLabelsBody>,
+) -> ApiResult<serde_json::Value> {
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+    let ep = state
+        .registry
+        .get(&endpoint_id)
+        .await
+        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "Endpoint not found"))?;
+
+    let labels_json = serde_json::json!({ "Labels": body.labels });
+    let body_bytes = serde_json::to_vec(&labels_json)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    let path = format!("/v1.45/containers/{}/update", id);
+
+    let result: Result<(), (StatusCode, Json<serde_json::Value>)> = if ep.connection.starts_with("unix://") {
+        // Unix socket via hyperlocal
+        let socket_path = ep
+            .connection
+            .strip_prefix("unix://")
+            .unwrap_or("/var/run/docker.sock");
+        let uri: hyper::Uri = hyperlocal::Uri::new(socket_path, &path).into();
+        let client: hyper_util::client::legacy::Client<
+            hyperlocal::UnixConnector,
+            http_body_util::Full<bytes::Bytes>,
+        > = hyper_util::client::legacy::Client::unix();
+        let req = hyper::Request::builder()
+            .method(hyper::Method::POST)
+            .uri(uri)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(http_body_util::Full::new(bytes::Bytes::from(body_bytes)))
+            .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Build request error: {e}")))?;
+        let resp = client
+            .request(req)
+            .await
+            .map_err(|e| error(StatusCode::BAD_GATEWAY, &format!("Request error: {e}")))?;
+        let status = resp.status();
+        let body_data = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .map_err(|e| error(StatusCode::BAD_GATEWAY, &format!("Read body error: {e}")))?;
+        let body_text = String::from_utf8_lossy(&body_data.to_bytes()).to_string();
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(error(
+                StatusCode::BAD_GATEWAY,
+                &format!("Docker API error ({}): {}", status.as_u16(), body_text),
+            ))
+        }
+    } else {
+        // TCP or TLS via reqwest
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Client build error: {e}")))?;
+        let base = ep
+            .connection
+            .trim_end_matches('/');
+        // Reqwest handles 'http://' and 'https://' natively.
+        // For 'tcp://', convert to 'http://' since Docker API uses plain HTTP over TCP.
+        let url = if base.starts_with("tcp://") {
+            format!("http://{}{}", &base[6..], path)
+        } else {
+            format!("{}{}", base, path)
+        };
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .body(body_bytes)
+            .send()
+            .await
+            .map_err(|e| error(StatusCode::BAD_GATEWAY, &format!("Request error: {e}")))?;
+        let status = resp.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            let body_text = resp.text().await.unwrap_or_default();
+            Err(error(
+                StatusCode::BAD_GATEWAY,
+                &format!("Docker API error ({}): {}", status.as_u16(), body_text),
+            ))
+        }
+    };
+
+    match result {
+        Ok(()) => Ok(Json(
+            serde_json::json!({"status": "labels_updated", "id": id}),
+        )),
+        Err(e) => Err(e),
+    }
 }
 
 pub async fn rename_container(

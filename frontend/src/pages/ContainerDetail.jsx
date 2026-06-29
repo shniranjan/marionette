@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import LogViewer from '../components/LogViewer';
+import Terminal from '../components/Terminal';
 import StatsPanel from '../components/StatsPanel';
 import JsonTree from '../components/JsonTree';
 import SecretMask from '../components/SecretMask';
@@ -10,7 +11,7 @@ import StatusBadge from '../components/StatusBadge';
 import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
 
-const TABS = ['info', 'logs', 'stats', 'env', 'mounts', 'network'];
+const TABS = ['info', 'logs', 'stats', 'env', 'mounts', 'network', 'labels'];
 
 export default function ContainerDetail({ id, name, navigate }) {
   const toast = useToast();
@@ -26,6 +27,10 @@ export default function ContainerDetail({ id, name, navigate }) {
   const [templateDesc, setTemplateDesc] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Labels editing state
+  const [editLabels, setEditLabels] = useState(null);
+  const [savingLabels, setSavingLabels] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
@@ -40,6 +45,14 @@ export default function ContainerDetail({ id, name, navigate }) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Initialize edit labels when switching to labels tab
+  useEffect(() => {
+    if (tab === 'labels' && editLabels === null) {
+      const labels = inspect?.labels || inspect?.Config?.Labels || {};
+      setEditLabels({ ...labels });
+    }
+  }, [tab, inspect, editLabels]);
 
   const switchTab = (t) => {
     setTab(t);
@@ -93,12 +106,70 @@ export default function ContainerDetail({ id, name, navigate }) {
     }
   };
 
+  // ── Labels editing ──────────────────────────────────────────
+  const initLabels = useCallback(() => {
+    const labels = inspect?.labels || inspect?.Config?.Labels || {};
+    setEditLabels({ ...labels });
+  }, [inspect]);
+
+  const handleAddLabel = () => {
+    setEditLabels((prev) => ({ ...(prev || {}), '': '' }));
+  };
+
+  const handleLabelChange = (oldKey, newKey, value) => {
+    setEditLabels((prev) => {
+      const next = { ...prev };
+      delete next[oldKey];
+      if (newKey.trim()) next[newKey.trim()] = value;
+      return next;
+    });
+  };
+
+  const handleRemoveLabel = (key) => {
+    setEditLabels((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleSaveLabels = async () => {
+    setSavingLabels(true);
+    try {
+      // Filter out empty keys
+      const cleaned = {};
+      Object.entries(editLabels || {}).forEach(([k, v]) => {
+        if (k.trim()) cleaned[k.trim()] = v;
+      });
+      await api.patch(`/api/containers/${id}/labels`, { labels: cleaned });
+      toast.success('Labels updated');
+      load(); // refresh inspect data
+    } catch (err) {
+      toast.error(err.message || 'Failed to save labels');
+    } finally {
+      setSavingLabels(false);
+    }
+  };
+
+  const labelEntries = editLabels ? Object.entries(editLabels) : [];
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
   if (error) return <div className="text-danger">Error: {error}</div>;
   if (!inspect) return <div className="text-secondary">No data</div>;
 
-  const displayName = (name || inspect.name || id || '').replace(/^\\//, '');
+  const displayName = (name || inspect.name || id || '').replace(/^\//, '');
   const state = inspect.state || 'unknown';
+
+  // Build open-in-browser link if any common web port is exposed
+  const webLink = useMemo(() => {
+    const WEB_PORTS = new Set([80, 443, 8080, 3000, 8000, 8443]);
+    const ports = inspect.ports || [];
+    const web = ports.find((p) => WEB_PORTS.has(p.privatePort));
+    if (!web) return null;
+    const publicPort = web.publicPort || web.privatePort;
+    const protocol = web.privatePort === 443 || web.privatePort === 8443 ? 'https' : 'http';
+    return `${protocol}://${window.location.hostname}:${publicPort}`;
+  }, [inspect]);
 
   // Extract stack name from Docker Compose labels
   const composeProject = inspect?.labels?.['com.docker.compose.project'] ||
@@ -122,7 +193,19 @@ export default function ContainerDetail({ id, name, navigate }) {
             <StatusBadge state={state} />
           </span>
         </div>
-        <ActionBar containerId={id} state={state} onAction={load} />
+        <ActionBar containerId={id} state={state} onAction={load} onShell={() => switchTab('shell')} />
+        {webLink && (
+          <a
+            href={webLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn"
+            style={{ marginLeft: '8px', textDecoration: 'none' }}
+            title={`Open ${webLink}`}
+          >
+            🌐 Open in Browser
+          </a>
+        )}
         <button
           className="btn"
           onClick={() => {
@@ -244,6 +327,80 @@ export default function ContainerDetail({ id, name, navigate }) {
               ))
             ) : (
               <div className="text-secondary">No network info</div>
+            )}
+          </div>
+        )}
+        {tab === 'shell' && (
+          <div style={{ height: 'calc(100vh - 260px)' }}>
+            <Terminal
+              containerId={id}
+              containerName={displayName}
+              onClose={() => switchTab('info')}
+            />
+          </div>
+        )}
+        {tab === 'labels' && (
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 style={{ margin: 0 }}>Labels</h2>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn" onClick={handleAddLabel} disabled={savingLabels}>+ Add Label</button>
+                <button className="btn btn-primary" onClick={handleSaveLabels} disabled={savingLabels}>
+                  {savingLabels ? 'Saving...' : '💾 Save Labels'}
+                </button>
+              </div>
+            </div>
+            {labelEntries.length > 0 ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: '40%' }}>Key</th>
+                    <th style={{ width: '50%' }}>Value</th>
+                    <th style={{ width: '10%' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {labelEntries.map(([key, value]) => (
+                    <tr key={key}>
+                      <td>
+                        <input
+                          className="input"
+                          value={key}
+                          onChange={(e) => handleLabelChange(key, e.target.value, value)}
+                          placeholder="key"
+                          style={{ width: '100%' }}
+                          disabled={savingLabels}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="input"
+                          value={value}
+                          onChange={(e) => handleLabelChange(key, key, e.target.value)}
+                          placeholder="value"
+                          style={{ width: '100%' }}
+                          disabled={savingLabels}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleRemoveLabel(key)}
+                          disabled={savingLabels}
+                          style={{ color: 'var(--danger)', padding: '2px 8px' }}
+                          title="Remove label"
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-secondary" style={{ padding: '16px 0' }}>
+                No labels. Click "+ Add Label" to add one.
+              </div>
             )}
           </div>
         )}

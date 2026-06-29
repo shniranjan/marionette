@@ -1,6 +1,6 @@
 import { api } from '../api/client';
 
-export default function ActionBar({ containerId, state, onAction }) {
+export default function ActionBar({ containerId, state, onAction, onShell }) {
   const isRunning = state === 'running';
   const isPaused = state === 'paused';
   const isStopped = state === 'stopped' || state === 'exited';
@@ -32,6 +32,11 @@ export default function ActionBar({ containerId, state, onAction }) {
           <button className="btn-sm" onClick={() => doAction('pause')}>
             ⏸ Pause
           </button>
+          {onShell && (
+            <button className="btn-sm" onClick={onShell} title="Open Shell">
+              🖥 Shell
+            </button>
+          )}
         </>
       )}
       {isPaused && (

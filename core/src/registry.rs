@@ -114,7 +114,7 @@ impl EndpointRegistry {
 
     /// Get a single endpoint by ID.
     pub async fn get(&self, id: &str) -> Option<DockerEndpoint> {
-        let mut eps = self.db.load_endpoints();
+        let eps = self.db.load_endpoints();
         eps.into_iter().find(|ep| ep.id == id)
     }
 

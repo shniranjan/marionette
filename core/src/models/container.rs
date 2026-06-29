@@ -15,6 +15,8 @@ pub struct ContainerSummary {
     pub stack: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub health: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

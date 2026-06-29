@@ -102,10 +102,12 @@ async fn main() {
         .route("/containers/{id}/unpause", post(routes::containers::unpause_container))
         .route("/containers/{id}", delete(routes::containers::remove_container))
         .route("/containers/{id}/rename", post(routes::containers::rename_container))
+        .route("/containers/{id}/labels", patch(routes::containers::update_labels))
         .route("/containers/{id}/logs", get(ws::logs::container_logs_ws))
         .route("/containers/logs/merged", get(ws::merged_logs::merged_logs_ws))
         .route("/containers/{id}/logs/download", get(ws::logs::download_logs))
         .route("/containers/{id}/stats", get(ws::stats::container_stats_ws))
+        .route("/containers/{id}/exec", get(ws::exec::container_exec_ws))
         .route("/containers/batch", post(routes::containers::batch_containers))
         // Images
         .route("/images", get(routes::images::list_images))

@@ -41,6 +41,8 @@ export default function Dashboard({ navigate }) {
   const images = system?.images ?? '—';
   const volumes = system?.volumes ?? '—';
   const networks = system?.networks ?? '—';
+  const hostCpus = system?.cpuCount ?? '—';
+  const hostMemory = system?.memoryBytes != null ? formatBytes(system.memoryBytes) : '—';
 
   return (
     <div>
@@ -91,6 +93,18 @@ export default function Dashboard({ navigate }) {
           value={networks}
           label="Networks"
           onClick={() => navigate('networks')}
+        />
+        <StatCard
+          icon="🧠"
+          value={hostMemory}
+          label="Host Memory"
+          color="var(--blue)"
+        />
+        <StatCard
+          icon="⚙️"
+          value={hostCpus}
+          label="Host CPUs"
+          color="var(--blue)"
         />
       </div>
 
