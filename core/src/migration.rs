@@ -163,6 +163,9 @@ async fn build_migration_plan(
     container_id: &str,
     transfer_method: &str,
     generate_commands: bool,
+    compression: &str,
+    post_options: &PostOptions,
+    volume_overrides: &HashMap<String, VolumeOverride>,
 ) -> Result<MigrationPlan, (StatusCode, Json<serde_json::Value>)> {
     // ── Step 0: Validate ──────────────────────────────────────
     let migration_id = Uuid::new_v4().to_string();
@@ -278,11 +281,29 @@ async fn build_migration_plan(
                     let vol_transfer_method = if same_host {
                         "local".to_string()
                     } else {
-                        transfer_method.to_string()
+                        // Per-volume override from volume_overrides takes precedence
+                        if let Some(ov) = volume_overrides.get(vol_name) {
+                            ov.transfer_method.clone().unwrap_or_else(|| transfer_method.to_string())
+                        } else {
+                            transfer_method.to_string()
+                        }
                     };
 
                     let default_method =
                         suggest_transfer_method(&driver).to_string();
+
+                    // Merge volume override fields
+                    let (target_name, target_path, target_driver, skip) =
+                        if let Some(ov) = volume_overrides.get(vol_name) {
+                            (
+                                ov.target_name.clone(),
+                                ov.target_path.clone(),
+                                ov.target_driver.clone(),
+                                ov.skip,
+                            )
+                        } else {
+                            (None, None, None, false)
+                        };
 
                     volumes.push(MigrationVolume {
                         name: vol_name.clone(),
@@ -293,10 +314,10 @@ async fn build_migration_plan(
                         transfer_method: vol_transfer_method,
                         default_transfer_method: default_method,
                         options: vol_opts.clone(),
-                        target_name: None,
-                        target_path: None,
-                        target_driver: None,
-                        skip: false,
+                        target_name,
+                        target_path,
+                        target_driver,
+                        skip,
                     });
                 }
             } else if mount_type == "bind" {
@@ -499,14 +520,14 @@ async fn build_migration_plan(
         commands,
         warnings,
         estimated_size_bytes,
-        compressed: true,
+        compressed: compression != "none",
         env_vars,
         has_compose_secrets,
-        start_on_target: true,
-        verify_connectivity: true,
-        compression: String::new(),
-        post_options: None,
-        volume_overrides: None,
+        start_on_target: post_options.start_on_target,
+        verify_connectivity: post_options.verify_connectivity,
+        compression: compression.to_string(),
+        post_options: Some(post_options.clone()),
+        volume_overrides: if volume_overrides.is_empty() { None } else { Some(volume_overrides.clone()) },
     })
 }
 
@@ -523,6 +544,9 @@ pub async fn analyze_migration(
         &body.container_id,
         "scp",
         false, // no commands
+        "none",
+        &PostOptions::default(),
+        &HashMap::new(),
     )
     .await?;
 
@@ -558,6 +582,9 @@ pub async fn plan_migration(
         &body.container_id,
         &body.transfer_method,
         true, // generate commands
+        &body.compression,
+        &body.post_options,
+        &body.volume_overrides,
     )
     .await?;
 
@@ -600,6 +627,9 @@ pub async fn dry_run_migration(
         &body.container_id,
         &body.transfer_method,
         true,
+        &body.compression,
+        &body.post_options,
+        &body.volume_overrides,
     )
     .await?;
 
