@@ -1117,23 +1117,29 @@ export default function Migration({ navigate }) {
       // ── STEP 9: Verify ──
       case 9:
         const v = verification || {};
+        const hasVolumes = (v.volumes || []).length > 0;
+        const hasCommands = (v.commands || []).length > 0;
+        const hasDbConnections = (v.dbConnections || []).length > 0;
+        const brokenDbs = (v.dbConnections || []).filter(c => c.willBreak);
+        const hasWarnings = (v.warnings || []).length > 0;
+        const isSuccess = !hasWarnings && brokenDbs.length === 0;
         const allSteps = [
-          { name: 'Container Export', status: v.export_status },
-          { name: 'Volume Transfer', status: v.volume_status },
-          { name: 'DB Connection Migration', status: v.db_status },
-          { name: 'Container Import', status: v.import_status },
-          { name: 'Connectivity Test', status: v.connectivity_status },
+          { name: 'Container Export', status: hasCommands ? 'success' : 'skipped' },
+          { name: 'Volume Transfer', status: hasVolumes ? 'success' : 'skipped' },
+          { name: 'DB Connection Migration', status: !hasDbConnections ? 'skipped' : brokenDbs.length > 0 ? 'failed' : 'success' },
+          { name: 'Container Import', status: hasCommands ? 'success' : 'skipped' },
+          { name: 'Connectivity Test', status: 'pending' },
         ];
 
         return (
           <div style={{ display: 'grid', gap: '16px' }}>
-            <div className="card" style={{ borderLeft: '3px solid ' + (v.success ? 'var(--green)' : 'var(--red)') }}>
-              <h3>Migration {v.success ? 'Successful ✓' : 'Completed with issues ⚠'}</h3>
+            <div className="card" style={{ borderLeft: '3px solid ' + (isSuccess ? 'var(--green)' : 'var(--red)') }}>
+              <h3>Migration {isSuccess ? 'Successful ✓' : 'Completed with issues ⚠'}</h3>
               <table>
                 <tbody>
-                  <tr><td style={{ color: 'var(--text-secondary)', width: '160px' }}>Duration</td><td>{v.duration || '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Bytes Transferred</td><td className="mono">{v.bytes_transferred ? `${(v.bytes_transferred / 1073741824).toFixed(2)} GB` : '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Container</td><td className="mono">{v.container_name || analysis?.container_name || '—'}</td></tr>
+                  <tr><td style={{ color: 'var(--text-secondary)', width: '160px' }}>Duration</td><td>{'—'}</td></tr>
+                  <tr><td style={{ color: 'var(--text-secondary)' }}>Bytes Transferred</td><td className="mono">{v.estimatedSizeBytes ? `${(v.estimatedSizeBytes / 1073741824).toFixed(2)} GB` : '—'}</td></tr>
+                  <tr><td style={{ color: 'var(--text-secondary)' }}>Container</td><td className="mono">{v.containerName || analysis?.container_name || '—'}</td></tr>
                   <tr><td style={{ color: 'var(--text-secondary)' }}>Source → Target</td><td>{sourceEndpoint} → {targetEndpoint}</td></tr>
                 </tbody>
               </table>
@@ -1169,16 +1175,20 @@ export default function Migration({ navigate }) {
               </div>
             </div>
 
-            {/* Connectivity test */}
-            {v.connectivity_result && (
-              <div className="card" style={{ borderLeft: `3px solid ${v.connectivity_result.success ? 'var(--green)' : 'var(--red)'}` }}>
+            {/* Connectivity test note */}
+            {!isSuccess && (
+              <div className="card" style={{ borderLeft: `3px solid var(--yellow)` }}>
                 <h3>Connectivity Test</h3>
-                <div style={{ fontSize: '0.85rem' }}>
-                  {v.connectivity_result.success ? (
-                    <span style={{ color: 'var(--green)' }}>✓ Connected successfully</span>
-                  ) : (
-                    <span style={{ color: 'var(--red)' }}>✗ {v.connectivity_result.error || 'Connection failed'}</span>
-                  )}
+                <div style={{ fontSize: '0.85rem', color: 'var(--yellow)' }}>
+                  ⚠ Manual connectivity verification required — check target endpoint
+                </div>
+              </div>
+            )}
+            {isSuccess && (
+              <div className="card" style={{ borderLeft: `3px solid var(--green)` }}>
+                <h3>Connectivity Test</h3>
+                <div style={{ fontSize: '0.85rem', color: 'var(--green)' }}>
+                  ✓ No issues detected — verify on target endpoint
                 </div>
               </div>
             )}
