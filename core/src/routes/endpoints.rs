@@ -3,11 +3,13 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use bollard::container::ListContainersOptions;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -268,4 +270,101 @@ pub async fn reconnect_endpoint(
         "id": id,
         "latency_ms": latency_ms
     })))
+}
+
+// ── Endpoint Info (live system details for migration target) ──
+
+pub async fn endpoint_info(
+    State(state): State<Arc<crate::AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<EndpointInfo> {
+    // Fetch endpoint from registry
+    let endpoint = state.registry.get(&id).await.ok_or_else(|| {
+        error(
+            StatusCode::NOT_FOUND,
+            &format!("Endpoint '{}' not found", id),
+        )
+    })?;
+
+    // Resolve Docker client
+    let docker = helpers::resolve_client(&state, Some(&id)).await?;
+
+    // Get Docker version
+    let docker_version = match timeout(Duration::from_secs(5), docker.version()).await {
+        Ok(Ok(ver)) => ver.version.unwrap_or_else(|| "unknown".to_string()),
+        _ => "unknown".to_string(),
+    };
+
+    // Get Docker system info for disk usage
+    let (disk_free_bytes, disk_total_bytes) = match timeout(Duration::from_secs(5), docker.info()).await {
+        Ok(Ok(info)) => {
+            let mut free: u64 = 0;
+            let mut total: u64 = 0;
+            // Parse driver_status for Data Space Available / Data Space Total
+            if let Some(status) = info.driver_status {
+                let mut i = 0;
+                while i + 1 < status.len() {
+                    if let (Some(key), Some(val)) = (status[i].first(), status[i + 1].first()) {
+                        if key == "Data Space Available" || key == "Data Space Free" {
+                            free = parse_docker_size(val);
+                        } else if key == "Data Space Total" {
+                            total = parse_docker_size(val);
+                        }
+                    }
+                    i += 2;
+                }
+            }
+            (free, total)
+        }
+        _ => (0, 0),
+    };
+
+    // Count containers
+    let container_count = match timeout(Duration::from_secs(5), docker.list_containers::<String>(Some(ListContainersOptions {
+        all: true,
+        ..Default::default()
+    }))).await {
+        Ok(Ok(containers)) => containers.len() as i64,
+        _ => 0,
+    };
+
+    Ok(Json(EndpointInfo {
+        id: endpoint.id.clone(),
+        name: endpoint.name.clone(),
+        connection: endpoint.connection.clone(),
+        status: serde_json::to_value(&endpoint.status)
+            .unwrap_or_default()
+            .as_str()
+            .unwrap_or("disconnected")
+            .to_string(),
+        tags: endpoint.tags.clone(),
+        cert_path: endpoint.cert_path.clone(),
+        docker_version,
+        container_count,
+        disk_free_bytes,
+        disk_total_bytes,
+    }))
+}
+
+/// Parse a Docker human-readable size string like "10.5 GB" or "500 MB" into bytes.
+fn parse_docker_size(s: &str) -> u64 {
+    let s = s.trim();
+    if let Some((num_str, unit)) = s.split_once(' ') {
+        let num: f64 = num_str.parse().unwrap_or(0.0);
+        let multiplier = match unit.to_uppercase().as_str() {
+            "B" => 1.0,
+            "KB" => 1_000.0,
+            "MB" => 1_000_000.0,
+            "GB" => 1_000_000_000.0,
+            "TB" => 1_000_000_000_000.0,
+            "KIB" | "K" => 1_024.0,
+            "MIB" | "M" => 1_048_576.0,
+            "GIB" | "G" => 1_073_741_824.0,
+            "TIB" | "T" => 1_099_511_627_776.0,
+            _ => 1.0,
+        };
+        (num * multiplier) as u64
+    } else {
+        s.parse::<u64>().unwrap_or(0)
+    }
 }

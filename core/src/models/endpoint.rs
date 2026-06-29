@@ -43,3 +43,21 @@ pub struct EndpointQuery {
     #[serde(default)]
     pub endpoint: Option<String>,
 }
+
+/// Live endpoint info for migration target selection.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointInfo {
+    // From DockerEndpoint
+    pub id: String,
+    pub name: String,
+    pub connection: String,
+    pub status: String,
+    pub tags: Vec<String>,
+    pub cert_path: Option<String>,
+    // Docker system info (live)
+    pub docker_version: String,
+    pub container_count: i64,
+    pub disk_free_bytes: u64,
+    pub disk_total_bytes: u64,
+}
