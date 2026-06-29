@@ -263,7 +263,7 @@ export default function Migration({ navigate }) {
   }, []);
 
   const allCriticalResolved = () => {
-    const conns = analysis?.db_connections || [];
+    const conns = analysis?.dbConnections || [];
     return conns.filter(c => c.willBreak).every(c => connectionResolutions[c.varName]?.resolved);
   };
 
@@ -347,16 +347,16 @@ export default function Migration({ navigate }) {
       results.forEach((r, i) => {
         resultMap[r.index !== undefined ? r.index : i] = {
           time: Date.now() - execStartTime,
-          status: r.exit_code === 0 ? 'done' : 'failed',
+          status: r.exitCode === 0 ? 'done' : 'failed',
           command: r.command,
           stdout: r.stdout,
           stderr: r.stderr,
-          exit_code: r.exit_code,
+          exit_code: r.exitCode,
         };
       });
       setExecResults(resultMap);
 
-      const allSuccess = results.every(r => r.exit_code === 0);
+      const allSuccess = results.every(r => r.exitCode === 0);
       setExecPhase(allSuccess ? 'done' : 'done');
       
       // Fetch updated migration plan
@@ -817,7 +817,7 @@ export default function Migration({ navigate }) {
 
       // ── STEP 5: Connection Fixes ──
       case 5: {
-        const conns = (analysis?.db_connections || []).map(c => ({
+        const conns = (analysis?.dbConnections || []).map(c => ({
           ...c,
           resolved: connectionResolutions[c.varName]?.resolved || false,
           resolution: connectionResolutions[c.varName]?.action,
@@ -930,10 +930,10 @@ export default function Migration({ navigate }) {
                   </div>
                 )}
 
-                {analysis?.estimated_size_bytes > 10 * 1073741824 && (
+                {analysis?.estimatedSizeBytes > 10 * 1073741824 && (
                   <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
                     <div style={{ color: 'var(--yellow)', fontSize: '0.85rem' }}>
-                      ⚠ Large volume ({((analysis?.estimated_size_bytes || 0) / 1073741824).toFixed(1)} GB) —
+                      ⚠ Large volume ({((analysis?.estimatedSizeBytes || 0) / 1073741824).toFixed(1)} GB) —
                       transfer may take significant time
                     </div>
                   </div>
@@ -1220,7 +1220,7 @@ export default function Migration({ navigate }) {
                 <tbody>
                   <tr><td style={{ color: 'var(--text-secondary)', width: '160px' }}>Duration</td><td>{'—'}</td></tr>
                   <tr><td style={{ color: 'var(--text-secondary)' }}>Bytes Transferred</td><td className="mono">{v.estimatedSizeBytes ? `${(v.estimatedSizeBytes / 1073741824).toFixed(2)} GB` : '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Container</td><td className="mono">{v.containerName || analysis?.container_name || '—'}</td></tr>
+                  <tr><td style={{ color: 'var(--text-secondary)' }}>Container</td><td className="mono">{v.containerName || analysis?.containerName || '—'}</td></tr>
                   <tr><td style={{ color: 'var(--text-secondary)' }}>Source → Target</td><td>{sourceEndpoint} → {targetEndpoint}</td></tr>
                 </tbody>
               </table>
