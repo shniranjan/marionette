@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -165,25 +165,23 @@ async fn discover_lb_containers(
     state: &Arc<crate::AppState>,
 ) -> Result<Vec<LabeledContainer>, String> {
     let endpoints_snapshot: Vec<(String, String)> = {
-        let eps = state.endpoints.read().await;
+        let eps = state.registry.list().await;
         eps.iter()
-            .filter(|(_, ep)| matches!(ep.status, EndpointStatus::Connected))
-            .map(|(id, ep)| (id.clone(), ep.name.clone()))
+            .filter(|ep| matches!(ep.status, EndpointStatus::Connected))
+            .map(|ep| (ep.id.clone(), ep.name.clone()))
             .collect()
     };
 
     let mut labeled = Vec::new();
 
     for (endpoint_id, _ep_name) in &endpoints_snapshot {
-        let clients = state.clients.read().await;
-        let docker = match get_client(endpoint_id, &clients).await {
+        let docker = match helpers::resolve_client(state, Some(endpoint_id)).await {
             Ok(d) => d,
-            Err(e) => {
-                tracing::warn!("Skipping endpoint {} in LB scan: {}", endpoint_id, e);
+            Err((_, _)) => {
+                tracing::warn!("Skipping endpoint {} in LB scan", endpoint_id);
                 continue;
             }
         };
-        drop(clients);
 
         let containers = docker
             .list_containers::<String>(Some(ListContainersOptions {
@@ -277,10 +275,8 @@ async fn build_upstreams(
                 .unwrap_or(1);
 
             // Inspect container to get its IP
-            let clients = state.clients.read().await;
-            let host = match get_client(&lc.endpoint_id, &clients).await {
+            let host = match helpers::resolve_client(state, Some(&lc.endpoint_id)).await {
                 Ok(docker) => {
-                    drop(clients);
                     match docker.inspect_container(&lc.container_id, None).await {
                         Ok(info) => extract_container_ip(&info).unwrap_or_else(|| "127.0.0.1".to_string()),
                         Err(e) => {
@@ -293,9 +289,8 @@ async fn build_upstreams(
                         }
                     }
                 }
-                Err(e) => {
-                    drop(clients);
-                    tracing::warn!("Cannot reach endpoint {}: {}", lc.endpoint_id, e);
+                Err((_, _)) => {
+                    tracing::warn!("Cannot reach endpoint {}", lc.endpoint_id);
                     "127.0.0.1".to_string()
                 }
             };

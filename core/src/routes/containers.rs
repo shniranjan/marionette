@@ -12,7 +12,7 @@ use bollard::models::PortBinding;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -95,14 +95,7 @@ pub async fn list_containers(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<ContainerSummary>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let containers = docker
         .list_containers::<String>(Some(ListContainersOptions {
@@ -143,14 +136,7 @@ pub async fn inspect_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<ContainerDetail> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let info = docker
         .inspect_container(&id, None)
@@ -246,14 +232,7 @@ pub async fn start_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .start_container(&id, None::<StartContainerOptions<String>>)
@@ -268,14 +247,7 @@ pub async fn stop_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .stop_container(&id, None::<StopContainerOptions>)
@@ -290,14 +262,7 @@ pub async fn restart_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .restart_container(&id, None::<RestartContainerOptions>)
@@ -312,14 +277,7 @@ pub async fn kill_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .kill_container(&id, None::<KillContainerOptions<String>>)
@@ -334,14 +292,7 @@ pub async fn pause_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .pause_container(&id)
@@ -356,14 +307,7 @@ pub async fn unpause_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .unpause_container(&id)
@@ -386,14 +330,7 @@ pub async fn remove_container(
     Path(id): Path<String>,
     Query(query): Query<RemoveQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = query
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, query.endpoint.as_deref()).await?;
 
     docker
         .remove_container(
@@ -422,14 +359,7 @@ pub async fn rename_container(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<RenameBody>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .rename_container(

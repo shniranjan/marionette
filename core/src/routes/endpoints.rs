@@ -8,7 +8,6 @@ use std::time::Instant;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
-use crate::docker::*;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -22,9 +21,8 @@ fn error(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 pub async fn list_endpoints(
     State(state): State<Arc<crate::AppState>>,
 ) -> ApiResult<Vec<DockerEndpoint>> {
-    let endpoints = state.endpoints.read().await;
-    let list: Vec<DockerEndpoint> = endpoints.values().cloned().collect();
-    Ok(Json(list))
+    let endpoints = state.registry.list().await;
+    Ok(Json(endpoints))
 }
 
 // ── Create Endpoint ───────────────────────────────────────────
@@ -44,40 +42,9 @@ pub async fn create_endpoint(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<EndpointCreateBody>,
 ) -> ApiResult<DockerEndpoint> {
-    // Check for duplicate name
-    let endpoints = state.endpoints.read().await;
-    if endpoints.values().any(|e| e.name == body.name) {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            &format!("Endpoint '{}' already exists", body.name),
-        ));
-    }
-    drop(endpoints);
-
-    // Create client
-    let docker = create_client(&body.connection, body.cert_path.as_deref())
-        .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
-
-    // Test connectivity (5s timeout)
-    match timeout(Duration::from_secs(5), docker.ping()).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                &format!("Connection test failed: {}", e),
-            ))
-        }
-        Err(_) => {
-            return Err(error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Connection timed out (5s)",
-            ))
-        }
-    }
-
     let id = Uuid::new_v4().to_string();
     let endpoint = DockerEndpoint {
-        id: id.clone(),
+        id,
         name: body.name.clone(),
         connection: body.connection.clone(),
         status: EndpointStatus::Connected,
@@ -85,25 +52,21 @@ pub async fn create_endpoint(
         cert_path: body.cert_path.clone(),
     };
 
-    // Insert into both maps
-    {
-        let mut endpoints = state.endpoints.write().await;
-        let mut clients = state.clients.write().await;
-        clients.insert(id.clone(), docker);
-        endpoints.insert(id.clone(), endpoint.clone());
-    }
-
-    // Persist to database
-    state.db.upsert_endpoint(&endpoint);
+    // Registry handles duplicate name check, connection test, persist, and client cache
+    let endpoint = state
+        .registry
+        .create(endpoint)
+        .await
+        .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
 
     // Audit
     state
         .audit_log
         .record(
             "endpoint.create",
-            &id,
-            &body.name,
-            &format!("connection={}", &body.connection),
+            &endpoint.id,
+            &endpoint.name,
+            &format!("connection={}", &endpoint.connection),
             "gateway",
         )
         .await;
@@ -117,20 +80,21 @@ pub async fn get_endpoint(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoints = state.endpoints.read().await;
-    let endpoint = endpoints.get(&id).ok_or_else(|| {
-        error(StatusCode::NOT_FOUND, &format!("Endpoint '{}' not found", id))
+    let endpoint = state.registry.get(&id).await.ok_or_else(|| {
+        error(
+            StatusCode::NOT_FOUND,
+            &format!("Endpoint '{}' not found", id),
+        )
     })?;
 
     // Test live connectivity
-    let clients = state.clients.read().await;
-    let connection_status = match clients.get(&id) {
-        Some(docker) => match timeout(Duration::from_secs(3), docker.ping()).await {
+    let connection_status = match state.registry.get_client(&id).await {
+        Ok(docker) => match timeout(Duration::from_secs(3), docker.ping()).await {
             Ok(Ok(_)) => "connected",
             Ok(Err(_)) => "disconnected",
             Err(_) => "timeout",
         },
-        None => "no_client",
+        Err(_) => "no_client",
     };
 
     Ok(Json(serde_json::json!({
@@ -162,92 +126,40 @@ pub async fn update_endpoint(
     Path(id): Path<String>,
     Json(body): Json<EndpointUpdateBody>,
 ) -> ApiResult<serde_json::Value> {
+    // Build audit detail before handing off to registry
     let mut detail_parts: Vec<String> = Vec::new();
-
-    // Determine effective cert_path: explicit update or fall back to existing
-    let effective_cert_path = if body.cert_path.is_some() {
-        body.cert_path.clone().flatten()
-    } else {
-        // Use existing endpoint's cert_path (read under read lock)
-        let endpoints = state.endpoints.read().await;
-        endpoints.get(&id).and_then(|ep| ep.cert_path.clone())
-    };
-
-    // If connection or cert_path changed, validate and recreate client
-    let needs_reconnect = body.connection.is_some() || body.cert_path.is_some();
-    if needs_reconnect {
-        let connection_str = if let Some(ref conn) = body.connection {
-            conn.clone()
-        } else {
-            let endpoints = state.endpoints.read().await;
-            endpoints.get(&id)
-                .map(|ep| ep.connection.clone())
-                .unwrap_or_default()
-        };
-        let docker = create_client(&connection_str, effective_cert_path.as_deref())
-            .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
-        // Quick connectivity test
-        match timeout(Duration::from_secs(5), docker.ping()).await {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => {
-                return Err(error(
-                    StatusCode::BAD_REQUEST,
-                    &format!("Connection test failed: {}", e),
-                ))
-            }
-            Err(_) => {
-                return Err(error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Connection timed out (5s)",
-                ))
-            }
-        }
-        let mut clients = state.clients.write().await;
-        clients.insert(id.clone(), docker);
-        detail_parts.push(format!("connection={}", connection_str));
+    if let Some(ref name) = body.name {
+        detail_parts.push(format!("name={}", name));
+    }
+    if let Some(ref conn) = body.connection {
+        detail_parts.push(format!("connection={}", conn));
+    }
+    if body.tags.is_some() {
+        detail_parts.push("tags=updated".to_string());
     }
 
-    // Update endpoint fields
-    {
-        let mut endpoints = state.endpoints.write().await;
-        let endpoint = endpoints.get_mut(&id).ok_or_else(|| {
-            error(StatusCode::NOT_FOUND, &format!("Endpoint '{}' not found", id))
+    // Registry handles: existence check, field updates, reconnect if needed,
+    // connection test, persistence, and client cache update
+    state
+        .registry
+        .update(&id, body.name, body.connection, body.tags, body.cert_path)
+        .await
+        .map_err(|e| {
+            if e.contains("not found") {
+                error(StatusCode::NOT_FOUND, &e)
+            } else {
+                error(StatusCode::BAD_REQUEST, &e)
+            }
         })?;
 
-        if let Some(name) = body.name {
-            detail_parts.push(format!("name={}", name));
-            endpoint.name = name;
-        }
-        if let Some(connection) = body.connection {
-            endpoint.connection = connection;
-            endpoint.status = EndpointStatus::Connected;
-        }
-        if let Some(tags) = body.tags {
-            detail_parts.push("tags=updated".to_string());
-            endpoint.tags = tags;
-        }
-        if body.cert_path.is_some() {
-            endpoint.cert_path = body.cert_path.clone().flatten();
-        }
-    }
-
-    // Persist updated endpoint to database
-    {
-        let endpoints = state.endpoints.read().await;
-        if let Some(ep) = endpoints.get(&id) {
-            state.db.upsert_endpoint(ep);
-        }
-    }
-
     // Audit
+    let target = state
+        .registry
+        .get(&id)
+        .await
+        .map(|e| e.name)
+        .unwrap_or_else(|| id.clone());
     let detail = detail_parts.join("; ");
-    let target = {
-        let endpoints = state.endpoints.read().await;
-        endpoints
-            .get(&id)
-            .map(|e| e.name.clone())
-            .unwrap_or_else(|| id.clone())
-    };
 
     state
         .audit_log
@@ -263,33 +175,14 @@ pub async fn delete_endpoint(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    // Refuse to delete the default "local" endpoint
-    {
-        let endpoints = state.endpoints.read().await;
-        if let Some(ep) = endpoints.get(&id) {
-            if ep.id == state.default_endpoint || ep.name == "local" {
-                return Err(error(
-                    StatusCode::FORBIDDEN,
-                    "Cannot delete the default 'local' endpoint",
-                ));
-            }
+    // Registry handles: existence check, "local" protection, DB removal, client cache removal
+    let removed_name = state.registry.delete(&id).await.map_err(|e| {
+        if e.contains("not found") {
+            error(StatusCode::NOT_FOUND, &e)
+        } else {
+            error(StatusCode::FORBIDDEN, &e)
         }
-    }
-
-    let removed_name;
-    {
-        let mut endpoints = state.endpoints.write().await;
-        let mut clients = state.clients.write().await;
-
-        let removed = endpoints
-            .remove(&id)
-            .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Endpoint '{}' not found", id)))?;
-        removed_name = removed.name;
-        clients.remove(&id);
-    }
-
-    // Delete from database
-    state.db.delete_endpoint(&id);
+    })?;
 
     // Audit
     state
@@ -306,10 +199,24 @@ pub async fn test_endpoint(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let clients = state.clients.read().await;
-    let docker = clients.get(&id).ok_or_else(|| {
-        error(StatusCode::NOT_FOUND, &format!("Endpoint '{}' not found", id))
-    })?;
+    // Verify endpoint exists first
+    if state.registry.get(&id).await.is_none() {
+        return Err(error(
+            StatusCode::NOT_FOUND,
+            &format!("Endpoint '{}' not found", id),
+        ));
+    }
+
+    // Try to get a live client (registry handles lazy-connect and health checks)
+    let docker = match state.registry.get_client(&id).await {
+        Ok(client) => client,
+        Err(e) => {
+            return Ok(Json(serde_json::json!({
+                "status": "error",
+                "error": e
+            })));
+        }
+    };
 
     let start = Instant::now();
     match timeout(Duration::from_secs(5), docker.ping()).await {
@@ -337,53 +244,17 @@ pub async fn reconnect_endpoint(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let (connection, cert_path) = {
-        let endpoints = state.endpoints.read().await;
-        let ep = endpoints.get(&id).ok_or_else(|| {
-            error(StatusCode::NOT_FOUND, &format!("Endpoint '{}' not found", id))
-        })?;
-        (ep.connection.clone(), ep.cert_path.clone())
-    };
-
-    // Recreate client
-    let docker = create_client(&connection, cert_path.as_deref())
-        .map_err(|e| error(StatusCode::BAD_REQUEST, &e))?;
-
-    // Test connectivity
-    match timeout(Duration::from_secs(5), docker.ping()).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                &format!("Reconnect failed: {}", e),
-            ))
-        }
-        Err(_) => {
-            return Err(error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Reconnect timed out (5s)",
-            ))
-        }
-    }
-
     let start = Instant::now();
-    // Update client and status
-    {
-        let mut clients = state.clients.write().await;
-        let mut endpoints = state.endpoints.write().await;
-        clients.insert(id.clone(), docker);
-        if let Some(ep) = endpoints.get_mut(&id) {
-            ep.status = EndpointStatus::Connected;
-        }
-    }
 
-    // Persist status to database
-    {
-        let endpoints = state.endpoints.read().await;
-        if let Some(ep) = endpoints.get(&id) {
-            state.db.upsert_endpoint(ep);
+    // Registry handles: existence check, client rebuild, connection test, cache update
+    state.registry.reconnect(&id).await.map_err(|e| {
+        if e.contains("not found") {
+            error(StatusCode::NOT_FOUND, &e)
+        } else {
+            error(StatusCode::BAD_REQUEST, &e)
         }
-    }
+    })?;
+
     let latency_ms = start.elapsed().as_millis() as u64;
 
     // Audit

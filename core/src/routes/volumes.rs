@@ -6,7 +6,7 @@ use axum::{
 use bollard::volume::{CreateVolumeOptions, ListVolumesOptions, RemoveVolumeOptions, PruneVolumesOptions};
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -21,14 +21,7 @@ pub async fn list_volumes(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<VolumeSummary>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let resp = docker
         .list_volumes(Some(ListVolumesOptions::<String> {
@@ -62,14 +55,7 @@ pub async fn create_volume(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<VolumeCreateRequest>,
 ) -> ApiResult<VolumeSummary> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let vol = docker
         .create_volume(CreateVolumeOptions {
@@ -98,14 +84,7 @@ pub async fn remove_volume(
     Path(name): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
         .remove_volume(
@@ -124,14 +103,7 @@ pub async fn prune_volumes(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let result = docker
         .prune_volumes(Some(PruneVolumesOptions::<String> {

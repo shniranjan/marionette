@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
-use crate::docker::get_client;
+use crate::helpers;
 use crate::models::EndpointQuery;
 
 /// Messages flowing from the docker compose process to the WS loop.
@@ -39,17 +39,14 @@ async fn handle_deploy_stream(
     stack_name: String,
     params: EndpointQuery,
 ) {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
+    let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
 
     // Verify endpoint connectivity
     {
-        let clients = state.clients.read().await;
-        if let Err(e) = get_client(&endpoint_id, &clients).await {
+        if let Err((_, json)) = helpers::resolve_client(&state, Some(&endpoint_id)).await {
             let _ = socket
                 .send(Message::Text(
-                    serde_json::json!({"error": e}).to_string().into(),
+                    json.to_string().into(),
                 ))
                 .await;
             let _ = socket.close().await;

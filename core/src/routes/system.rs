@@ -14,7 +14,7 @@ use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use crate::docker::*;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -29,26 +29,12 @@ pub async fn system_info(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<SystemInfo> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let info = docker
         .info()
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
-
-    // Re-acquire client for additional calls
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .unwrap_or_else(|_| docker.clone());
-    drop(clients);
 
     // List containers for running/paused/stopped counts
     let containers = docker
@@ -109,14 +95,7 @@ pub async fn docker_version(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let version = docker
         .version()
@@ -133,14 +112,7 @@ pub async fn prune_resources(
     Query(params): Query<EndpointQuery>,
     Json(body): Json<PruneRequest>,
 ) -> ApiResult<serde_json::Value> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-    let clients = state.clients.read().await;
-    let docker = get_client(&endpoint_id, &clients)
-        .await
-        .map_err(|e| error(StatusCode::SERVICE_UNAVAILABLE, &e))?;
-    drop(clients);
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let result = match body.resource.as_str() {
         "containers" => {
@@ -211,25 +183,19 @@ pub async fn docker_events(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<EndpointQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let endpoint_id = params
-        .endpoint
-        .unwrap_or_else(|| state.default_endpoint.clone());
-
-    let clients = state.clients.read().await;
-    let docker = match get_client(&endpoint_id, &clients).await {
+    let docker = match helpers::resolve_client(&state, params.endpoint.as_deref()).await {
         Ok(d) => d,
-        Err(e) => {
+        Err((_status, json)) => {
             let stream = stream::once(async move {
                 Ok(Event::default()
                     .event("error")
-                    .data(serde_json::json!({"error": e}).to_string()))
+                    .data(serde_json::to_string(&json.0).unwrap_or_default()))
             });
             // Box the error stream to match the type from the main branch
             let boxed: stream::BoxStream<'static, Result<Event, Infallible>> = stream.boxed();
             return Sse::new(boxed);
         }
     };
-    drop(clients);
 
     // Bollard 0.17: docker.events() returns impl Stream<Item = Result<EventMessage, Error>>
     let event_stream = docker.events(Some(EventsOptions::<String> {

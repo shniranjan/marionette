@@ -64,7 +64,7 @@ RUN echo 'include /etc/nginx/upstreams/*.conf;' >> /etc/nginx/http.d/default.con
 # Placeholder so nginx -t passes when no upstreams exist yet
 RUN echo '# marionette placeholder' > /etc/nginx/upstreams/placeholder.conf
 
-EXPOSE 8000
+EXPOSE 8000 8443
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
     CMD curl -sf http://localhost:9119/health || exit 1
 
