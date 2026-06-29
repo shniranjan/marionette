@@ -1,6 +1,5 @@
 use bollard::Docker;
 use std::collections::HashMap;
-use tokio::time::{timeout, Duration};
 
 use crate::models::{DockerEndpoint, EndpointStatus};
 
@@ -84,22 +83,6 @@ pub async fn build_initial_endpoints() -> (
     }
 
     (endpoints, clients, local_id)
-}
-
-/// Get a Docker client for an endpoint, with a 5-second timeout ping check.
-pub async fn get_client(
-    endpoint_id: &str,
-    clients: &HashMap<String, Docker>,
-) -> Result<Docker, String> {
-    let docker = clients
-        .get(endpoint_id)
-        .ok_or_else(|| format!("Endpoint not found: {}", endpoint_id))?;
-
-    match timeout(Duration::from_secs(5), docker.ping()).await {
-        Ok(Ok(_)) => Ok(docker.clone()),
-        Ok(Err(e)) => Err(format!("Docker unreachable: {}", e)),
-        Err(_) => Err("Docker connection timed out (5s)".to_string()),
-    }
 }
 
 /// Classify a volume driver and return (category, migration_advice).
