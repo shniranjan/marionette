@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const TRANSFER_METHODS = [
   { id: 'scp', label: 'SCP', desc: 'Secure copy over SSH. Good for single files/small volumes.', icon: '🔒' },
@@ -24,6 +24,29 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
     rotateCredentials: false,
   });
   const [volumeOverrides, setVolumeOverrides] = useState({});
+
+  // Initialize volume overrides with default transfer methods from volumes
+  useEffect(() => {
+    const defaults = {};
+    volumes.forEach(v => {
+      defaults[v.name] = {
+        transfer_method: v.defaultTransferMethod || 'inherit',
+      };
+    });
+    setVolumeOverrides(prev => {
+      // Merge with existing overrides (user may have customized some)
+      const merged = { ...defaults, ...prev };
+      // For each volume, preserve user overrides but ensure defaults exist
+      volumes.forEach(v => {
+        if (!merged[v.name]) {
+          merged[v.name] = { transfer_method: v.defaultTransferMethod || 'inherit' };
+        } else if (!merged[v.name].transfer_method) {
+          merged[v.name] = { ...merged[v.name], transfer_method: v.defaultTransferMethod || 'inherit' };
+        }
+      });
+      return merged;
+    });
+  }, [volumes]);
 
   const handleTransferChange = useCallback((method) => {
     setTransferMethod(method);
@@ -187,7 +210,7 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
         <div className="card">
           <h3>Per-Volume Transfer Overrides</h3>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-            Customize transfer method or target path per volume
+            Customize transfer method or target path per volume. Pre-selected defaults based on driver type.
           </div>
           <table>
             <thead>
@@ -195,12 +218,15 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                 <th>Volume</th>
                 <th>Size</th>
                 <th>Transfer Method</th>
+                <th>Suggestion</th>
                 <th>Custom Path</th>
               </tr>
             </thead>
             <tbody>
               {volumes.map((v) => {
                 const override = volumeOverrides[v.name] || {};
+                const defaultMethod = v.defaultTransferMethod || 'rsync-over-ssh';
+                const defaultMethodLabel = TRANSFER_METHODS.find(m => m.id === defaultMethod)?.label || defaultMethod;
                 return (
                   <tr key={v.name}>
                     <td className="mono" style={{ fontWeight: 500 }}>{v.name}</td>
@@ -209,7 +235,7 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                     </td>
                     <td>
                       <select
-                        value={override.transferMethod || v.transferMethod || transferMethod}
+                        value={override.transferMethod || defaultMethod}
                         onChange={(e) => handleVolumeOverride(v.name, 'transfer_method', e.target.value)}
                         style={{ fontSize: '0.75rem', padding: '4px 8px' }}
                       >
@@ -220,12 +246,23 @@ export default function MigrationPlan({ plan = {}, volumes = [], onUpdate }) {
                       </select>
                     </td>
                     <td>
+                      <span style={{
+                        fontSize: '0.7rem',
+                        color: 'var(--text-secondary)',
+                        background: 'var(--bg-tertiary)',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                      }}>
+                        💡 {defaultMethodLabel}
+                      </span>
+                    </td>
+                    <td>
                       <input
                         type="text"
                         value={override.custom_path || ''}
                         onChange={(e) => handleVolumeOverride(v.name, 'custom_path', e.target.value)}
                         placeholder="Default path"
-                        style={{ fontSize: '0.75rem', padding: '4px 8px', width: '180px' }}
+                        style={{ fontSize: '0.75rem', padding: '4px 8px', width: '150px' }}
                       />
                     </td>
                   </tr>
