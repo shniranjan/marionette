@@ -7,13 +7,18 @@ import { wsUrl, getKey } from '../api/client';
 const RECONNECT_DELAY_MS = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
-export default function Terminal({ containerId, containerName, onClose }) {
+const SHELLS = ['bash', 'sh', 'ash'];
+
+export default function Terminal({ containerId, containerName, shell = 'bash', onClose }) {
   const termRef = useRef(null);
   const wsRef = useRef(null);
   const reconnectCountRef = useRef(0);
   const reconnectTimerRef = useRef(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
+  const [currentShell, setCurrentShell] = useState(shell);
+  const shellRef = useRef(shell);
+  shellRef.current = currentShell;
 
   const connect = useCallback(() => {
     // Clean up any existing connection
@@ -22,7 +27,7 @@ export default function Terminal({ containerId, containerName, onClose }) {
       wsRef.current = null;
     }
 
-    const url = wsUrl(`/api/containers/${containerId}/exec?cmd=bash`);
+    const url = wsUrl(`/api/containers/${containerId}/exec?cmd=${shellRef.current}`);
     let ws;
     try {
       ws = new WebSocket(url);
@@ -152,6 +157,20 @@ export default function Terminal({ containerId, containerName, onClose }) {
     };
   }, [containerId, connect]);
 
+  const handleShellChange = (newShell) => {
+    if (newShell === currentShell) return;
+    setCurrentShell(newShell);
+    reconnectCountRef.current = 0;
+    setError(null);
+    // Close old connection and reconnect with new shell
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    // Small delay to let the ref update and old connection fully close
+    setTimeout(() => connect(), 50);
+  };
+
   const handleReconnect = () => {
     reconnectCountRef.current = 0;
     setError(null);
@@ -195,6 +214,22 @@ export default function Terminal({ containerId, containerName, onClose }) {
             }} />
             {connected ? 'Connected' : 'Disconnected'}
           </span>
+          <select
+            value={currentShell}
+            onChange={(e) => handleShellChange(e.target.value)}
+            style={{
+              fontSize: '0.75rem',
+              padding: '2px 4px',
+              background: 'var(--bg-secondary)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: '4px',
+            }}
+          >
+            {SHELLS.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {!connected && reconnectCountRef.current < MAX_RECONNECT_ATTEMPTS && (
