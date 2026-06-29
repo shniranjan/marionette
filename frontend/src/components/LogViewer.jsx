@@ -3,11 +3,15 @@ import { wsUrl } from '../api/client';
 
 const MAX_LINES = 10000;
 
+// Parse an ISO timestamp prefix from a Docker log line (e.g. "2024-01-15T10:30:45.123456789Z ...")
+const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s/;
+
 export default function LogViewer({ containerId }) {
   const [lines, setLines] = useState([]);
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState('');
   const [connected, setConnected] = useState(false);
+  const [showTimestamps, setShowTimestamps] = useState(true);
   const containerRef = useRef(null);
   const wsRef = useRef(null);
 
@@ -92,12 +96,29 @@ export default function LogViewer({ containerId }) {
         <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
           <input
             type="checkbox"
+            checked={showTimestamps}
+            onChange={(e) => setShowTimestamps(e.target.checked)}
+          />
+          Timestamps
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+          <input
+            type="checkbox"
             checked={autoScroll}
             onChange={(e) => setAutoScroll(e.target.checked)}
           />
           Auto-scroll
         </label>
         <button className="btn-sm" onClick={clearLogs}>Clear</button>
+        <button
+          className="btn-sm"
+          onClick={() => {
+            const ep = new URLSearchParams(window.location.search).get('endpoint') || 'local';
+            window.open(`/api/containers/${containerId}/logs/download?tail=all&timestamps=true&endpoint=${encodeURIComponent(ep)}`);
+          }}
+        >
+          Download
+        </button>
       </div>
 
       {/* Log output */}
@@ -118,11 +139,21 @@ export default function LogViewer({ containerId }) {
             {connected ? 'Waiting for logs...' : 'Connecting...'}
           </div>
         )}
-        {filtered.map((line, i) => (
-          <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-            {line}
-          </div>
-        ))}
+        {filtered.map((line, i) => {
+          const match = showTimestamps ? TIMESTAMP_RE.exec(line) : null;
+          return (
+            <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {match ? (
+                <>
+                  <span style={{ color: 'var(--text-muted)', opacity: 0.6 }}>{match[1]} </span>
+                  {line.slice(match[0].length)}
+                </>
+              ) : (
+                line
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

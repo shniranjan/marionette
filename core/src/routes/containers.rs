@@ -91,9 +91,18 @@ fn map_ports_inspect(
 
 // ── List Containers ───────────────────────────────────────────
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListContainersQuery {
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub include_health: bool,
+}
+
 pub async fn list_containers(
     State(state): State<Arc<crate::AppState>>,
-    Query(params): Query<EndpointQuery>,
+    Query(params): Query<ListContainersQuery>,
 ) -> ApiResult<Vec<ContainerSummary>> {
     let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
@@ -105,7 +114,7 @@ pub async fn list_containers(
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
-    let summaries: Vec<ContainerSummary> = containers
+    let mut summaries: Vec<ContainerSummary> = containers
         .into_iter()
         .map(|c| {
             let names = c.names.unwrap_or_default();
@@ -122,9 +131,39 @@ pub async fn list_containers(
                 created: c.created.unwrap_or(0),
                 ports: map_ports_list(&c.ports),
                 stack: extract_stack(&c.labels.unwrap_or_default()),
+                health: None,
             }
         })
         .collect();
+
+    // Parallel health inspection when requested
+    if params.include_health && !summaries.is_empty() {
+        let health_futures: Vec<_> = summaries
+            .iter()
+            .map(|s| {
+                let d = docker.clone();
+                let id = s.id.clone();
+                async move {
+                    d.inspect_container(&id, None)
+                        .await
+                        .ok()
+                        .and_then(|info| {
+                            info.state
+                                .as_ref()
+                                .and_then(|s| s.health.as_ref())
+                                .and_then(|h| h.status.as_ref())
+                                .map(|status| format!("{:?}", status).to_lowercase())
+                        })
+                }
+            })
+            .collect();
+
+        let health_results = futures::future::join_all(health_futures).await;
+
+        for (summary, health) in summaries.iter_mut().zip(health_results) {
+            summary.health = health;
+        }
+    }
 
     Ok(Json(summaries))
 }
@@ -344,6 +383,84 @@ pub async fn remove_container(
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
     Ok(Json(serde_json::json!({"status": "removed", "id": id})))
+}
+
+// ── Batch Container Actions ───────────────────────────────────
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchRequest {
+    pub action: String,
+    pub container_ids: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchResult {
+    pub success: Vec<String>,
+    pub failed: Vec<BatchFailure>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchFailure {
+    pub id: String,
+    pub error: String,
+}
+
+pub async fn batch_containers(
+    State(state): State<Arc<crate::AppState>>,
+    Query(params): Query<EndpointQuery>,
+    Json(body): Json<BatchRequest>,
+) -> ApiResult<BatchResult> {
+    let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
+
+    let futures: Vec<_> = body
+        .container_ids
+        .iter()
+        .map(|id| {
+            let d = docker.clone();
+            let id = id.clone();
+            let action = body.action.clone();
+            async move {
+                let result = match action.as_str() {
+                    "start" => {
+                        d.start_container(&id, None::<StartContainerOptions<String>>)
+                            .await
+                    }
+                    "stop" => {
+                        d.stop_container(&id, None::<StopContainerOptions>)
+                            .await
+                    }
+                    "restart" => {
+                        d.restart_container(&id, None::<RestartContainerOptions>)
+                            .await
+                    }
+                    _ => {
+                        return (id, Err("unknown action".to_string()));
+                    }
+                };
+                match result {
+                    Ok(_) => (id, Ok(())),
+                    Err(e) => (id, Err(e.to_string())),
+                }
+            }
+        })
+        .collect();
+
+    let results = futures::future::join_all(futures).await;
+
+    let mut success = Vec::new();
+    let mut failed = Vec::new();
+
+    for (id, result) in results {
+        match result {
+            Ok(()) => success.push(id),
+            Err(e) => failed.push(BatchFailure { id, error: e }),
+        }
+    }
+
+    Ok(Json(BatchResult { success, failed }))
 }
 
 // ── Rename Container ──────────────────────────────────────────

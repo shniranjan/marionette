@@ -147,7 +147,64 @@ pub async fn remove_stack(
     Ok(Json(serde_json::json!({"status": "removed", "name": name})))
 }
 
-// ── Create Stack (directory + file + deploy) ──────────────────
+// ── Get Stack Env File ─────────────────────────────────────────
+
+pub async fn get_stack_env(
+    State(state): State<Arc<crate::AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult<StackEnvResponse> {
+    let env_path = state.stacks_dir.join(&name).join(".env");
+
+    if !env_path.exists() {
+        return Ok(Json(StackEnvResponse {
+            variables: std::collections::HashMap::new(),
+        }));
+    }
+
+    let content = tokio::fs::read_to_string(&env_path)
+        .await
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read .env file"))?;
+
+    let mut variables = std::collections::HashMap::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            variables.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+
+    Ok(Json(StackEnvResponse { variables }))
+}
+
+// ── Save Stack Env File ────────────────────────────────────────
+
+pub async fn save_stack_env(
+    State(state): State<Arc<crate::AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<StackEnvRequest>,
+) -> ApiResult<serde_json::Value> {
+    let dir = state.stacks_dir.join(&name);
+
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    let env_path = dir.join(".env");
+    let mut content = String::new();
+    for (key, value) in &body.variables {
+        content.push_str(&format!("{}={}\n", key, value));
+    }
+
+    tokio::fs::write(&env_path, &content)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    Ok(Json(serde_json::json!({"status": "saved", "name": name})))
+}
+
 
 pub async fn create_stack(
     State(state): State<Arc<crate::AppState>>,
