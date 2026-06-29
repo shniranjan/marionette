@@ -21,6 +21,23 @@ const STEP_LABELS = [
   'Verify',
 ];
 
+/** Convert backend string-array env vars to object array for frontend display */
+const parseEnvVars = (envVarStrings) => {
+  if (!Array.isArray(envVarStrings)) return [];
+  return envVarStrings.map(s => {
+    const idx = s.indexOf('=');
+    const name = idx > 0 ? s.substring(0, idx) : s;
+    const value = idx > 0 ? s.substring(idx + 1) : '';
+    const isSensitive = /password|secret|key|token|credential|auth/i.test(name);
+    return {
+      name,
+      value,
+      valueMasked: isSensitive ? (value.length <= 4 ? '***' : value.substring(0, 2) + '***') : value,
+      isSensitive,
+    };
+  });
+};
+
 function StepIndicator({ currentStep, completedSteps = new Set() }) {
   return (
     <div style={{
@@ -215,7 +232,7 @@ export default function Migration({ navigate }) {
         source_endpoint: sourceEndpoint,
         container_id: selectedContainer.Id || selectedContainer.id,
       });
-      setAnalysis(result);
+      setAnalysis({ ...result, envVars: parseEnvVars(result.envVars || []) });
       setCompletedSteps(prev => new Set([...prev, 1]));
       setStep(2);
     } catch (err) {
@@ -750,7 +767,7 @@ export default function Migration({ navigate }) {
                     {envVars.map((env, i) => {
                       const isRevealed = credentialsRevealed[env.name];
                       const isConfirming = credRevealConfirm === env.name;
-                      const looksSensitive = (env.name || '').toLowerCase().match(/pass|secret|key|token|auth|cred/);
+                      const looksSensitive = env.isSensitive;
                       return (
                         <tr key={i}>
                           <td className="mono" style={{ fontWeight: 500 }}>{env.name}</td>
