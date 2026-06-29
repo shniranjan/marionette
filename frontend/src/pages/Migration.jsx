@@ -313,7 +313,7 @@ export default function Migration({ navigate }) {
       });
       setDryRunResult(result.plan);
       setMigrationPlan(result.plan);
-      setMigrationId(result.plan.migration_id);
+      setMigrationId(result.plan.migrationId);
     } catch (err) {
       toast('Dry run failed: ' + err.message, 'error');
     } finally {
