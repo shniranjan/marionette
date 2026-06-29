@@ -1,17 +1,16 @@
 services:
   marionette:
-    build: .
-    image: marionette:local
+    image: ghcr.io/shniranjan/marionette:v0.4.0
     container_name: marionette
     ports:
       - "8000:8000"
       - "8443:8443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /home/niranjan/dockerComposer:/stacks
-      - /srv/docker_config/marionette/data:/data
+      - ./stacks:/stacks
+      - ./data:/data
       # Persist TLS certs (endpoint client certs + gateway auto-TLS)
-      - /srv/docker_config/marionette/certs:/app/certs
+      - ./certs:/app/certs
     environment:
       - MARIONETTE_KEY=${MARIONETTE_KEY:-}
       - MARIONETTE_STACKS_DIR=${MARIONETTE_STACKS_DIR:-/stacks}
