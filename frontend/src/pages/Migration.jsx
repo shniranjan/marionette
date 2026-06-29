@@ -193,7 +193,7 @@ export default function Migration({ navigate }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get(`/api/endpoints/${epId}/containers`);
+      const data = await api.get('/api/containers');
       setContainers(Array.isArray(data) ? data : (data?.containers || []));
     } catch (err) {
       setError('Failed to load containers: ' + err.message);
@@ -211,7 +211,7 @@ export default function Migration({ navigate }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.post('/migration/analyze', {
+      const result = await api.post('/api/migration/analyze', {
         source_endpoint: sourceEndpoint,
         container_id: selectedContainer.Id || selectedContainer.id,
       });
@@ -301,7 +301,7 @@ export default function Migration({ navigate }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.post('/migration/dry-run', {
+      const result = await api.post('/api/migration/dry-run', {
         source_endpoint: sourceEndpoint,
         target_endpoint: targetEndpoint,
         container_id: selectedContainer?.Id || selectedContainer?.id,
@@ -311,9 +311,9 @@ export default function Migration({ navigate }) {
         connection_resolutions: connectionResolutions,
         target_stack_name: targetStackName || undefined,
       });
-      setDryRunResult(result);
-      setMigrationPlan(result);
-      setMigrationId(result.migrationId);
+      setDryRunResult(result.plan);
+      setMigrationPlan(result.plan);
+      setMigrationId(result.plan.migration_id);
     } catch (err) {
       toast('Dry run failed: ' + err.message, 'error');
     } finally {
@@ -370,7 +370,7 @@ export default function Migration({ navigate }) {
   const handlePostMigration = async (action) => {
     try {
       if (action === 'remove_source') {
-        await api.post(`/api/endpoints/${sourceEndpoint}/containers/${selectedContainer?.Id || selectedContainer?.id}/remove`);
+        await api.delete(`/api/containers/${selectedContainer?.Id || selectedContainer?.id}`);
         toast('Container removed from source', 'success');
       } else if (action === 'rollback') {
         await api.post(`/api/migration/${migrationId}/rollback`);
