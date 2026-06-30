@@ -104,15 +104,13 @@ Marionette manages containers and writes route config. AuxGate (separate contain
 
 | Document | Contents |
 |----------|----------|
-| [Quickstart Guide](docs/quickstart.md) | Step-by-step from zero to working marionette. Local + multi-host. |
-| [Architecture](docs/architecture.md) | Data flow, component design, design decisions, tradeoffs |
-| [Security](docs/security.md) | Threat model, credential handling, best practices, audit logging |
-| [User Manual](docs/user-manual.md) | Every page and feature documented with screenshots |
-| [API Reference](docs/api-reference.md) | All Rust core endpoints with request/response examples |
-| [Tutorial](docs/tutorial.md) | Guided walkthroughs for common workflows |
-| [FAQ](docs/faq.md) | Common questions and answers |
-| [Troubleshooting](docs/troubleshooting.md) | Error messages, causes, and fixes |
-| [Contributing](docs/contributing.md) | Dev setup, conventions, PR process |
+| [Quickstart Guide](docs/quickstart.md) | Step-by-step from zero to working marionette. Local + multi-host setup, TLS, remote Docker, troubleshooting. |
+| [Architecture](docs/architecture.md) | Process model, data flow, state management, multi-host, migration engine, frontend patterns. |
+| [User Manual](docs/user-manual.md) | Every page and feature documented with usage instructions. |
+| [Tutorial](docs/tutorial.md) | Guided walkthroughs for common workflows — multi-host setup, migration, stack deployment. |
+| [FAQ](docs/faq.md) | Common questions about setup, auth, migration, remote access, and more. |
+
+**Security and contributing** are covered in the sections above on this page. API endpoints are listed in the [Features](#features) table.
 
 ---
 
