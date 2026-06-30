@@ -1379,3 +1379,81 @@ pub async fn prepare_compose_target(
         "status": if errors.is_empty() { "success" } else { "partial_success" }
     })))
 }
+
+// ── POST /migration/compose/switchover ─────────────────────────────
+
+/// Execute a live compose switchover from source to target endpoint.
+/// Spawns the switchover state machine in a background task and returns
+/// immediately. Progress is streamed via WebSocket at /migration/compose/progress.
+pub async fn switchover_compose(
+    State(state): State<Arc<crate::AppState>>,
+    Json(body): Json<crate::switchover::SwitchoverRequest>,
+) -> ApiResult<serde_json::Value> {
+    use tokio::sync::mpsc;
+    use crate::switchover::ProgressMessage;
+
+    // Resolve source and target Docker clients
+    let source = helpers::resolve_client(&state, Some(&body.source_endpoint)).await?;
+    let target = helpers::resolve_client(&state, Some(&body.target_endpoint)).await?;
+
+    // Set up progress broadcast channel for WebSocket subscribers
+    let broadcast_tx = crate::ws::progress::begin_switchover_session().await;
+    let (mpsc_tx, mut mpsc_rx) = mpsc::unbounded_channel::<ProgressMessage>();
+
+    // Bridge mpsc (used by run_switchover) → broadcast (used by WebSocket)
+    tokio::spawn(async move {
+        while let Some(msg) = mpsc_rx.recv().await {
+            let _ = broadcast_tx.send(msg);
+        }
+        // When switchover completes (mpsc_tx dropped), end the broadcast session
+        crate::ws::progress::end_switchover_session().await;
+    });
+
+    // Clone for the background task (Docker and SwitchoverRequest both derive Clone)
+    let source_bg = source.clone();
+    let target_bg = target.clone();
+    let body_bg = body.clone();
+    let stacks_dir = state.stacks_dir.to_string_lossy().to_string();
+
+    // Audit
+    state
+        .audit_log
+        .record(
+            "migration.compose.switchover",
+            &body.source_endpoint,
+            &body.stack_name,
+            &format!(
+                "Switchover initiated: {} → {}",
+                body.source_endpoint, body.target_endpoint
+            ),
+            "gateway",
+        )
+        .await;
+
+    // Spawn switchover in background task
+    tokio::spawn(async move {
+        let result = crate::switchover::run_switchover(
+            &source_bg,
+            &target_bg,
+            &body_bg,
+            &stacks_dir,
+            &stacks_dir,
+            Some(mpsc_tx),
+        )
+        .await;
+        tracing::info!(
+            "Switchover completed: status={}, steps={}, rollback={}",
+            result.status,
+            result.steps.len(),
+            result.rollback_performed
+        );
+    });
+
+    Ok(Json(serde_json::json!({
+        "status": "started",
+        "message": "Switchover initiated. Connect to /migration/compose/progress for live updates.",
+        "source_endpoint": body.source_endpoint,
+        "target_endpoint": body.target_endpoint,
+        "stack_name": body.stack_name,
+    })))
+}

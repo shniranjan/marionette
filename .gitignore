@@ -39,3 +39,7 @@ data/
 # AI-generated (never push)
 .hermes/
 docs/project-inception-*
+
+# Private vault — research, architecture, trade secrets
+# (belt-and-suspenders: already covered by .hermes/ above)
+.hermes/vault/

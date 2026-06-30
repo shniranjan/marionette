@@ -10,6 +10,7 @@ mod ws;
 mod registry;
 mod helpers;
 mod transfer;
+mod switchover;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -217,6 +218,8 @@ async fn main() {
         .route("/migration/transfer", post(migration::transfer_volumes))
         .route("/migration/compose/analyze", post(migration::analyze_compose))
         .route("/migration/compose/prepare", post(migration::prepare_compose_target))
+        .route("/migration/compose/switchover", post(migration::switchover_compose))
+        .route("/migration/compose/progress", get(ws::progress::switchover_progress_ws))
         .layer(cors)
         .with_state(state);
 

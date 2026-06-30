@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { id: 'routes', label: 'Routes', icon: '🔀' },
   { id: 'templates', label: 'Templates', icon: '📋' },
   { id: 'migration', label: 'Migration', icon: '🚚' },
+  { id: 'migrationCompose', label: 'Compose Migrate', icon: '📋' },
   { id: 'system', label: 'System', icon: '⚙' },
 ];
 
@@ -28,6 +29,8 @@ const RECENT_ICONS = {
   nginx: '⚖️',
   routes: '🔀',
   templates: '📋',
+  migration: '🚚',
+  migrationCompose: '📋',
   system: '⚙',
 };
 

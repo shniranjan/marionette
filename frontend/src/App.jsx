@@ -15,6 +15,7 @@ import Stacks from './pages/Stacks';
 import System from './pages/System';
 import Endpoints from './pages/Endpoints';
 import Migration from './pages/Migration';
+import MigrationCompose from './pages/MigrationCompose';
 import Swarm from './pages/Swarm';
 import Nginx from './pages/Nginx';
 import Routes from './pages/Routes';
@@ -33,6 +34,7 @@ const PAGES = {
   system: System,
   endpoints: Endpoints,
   migration: Migration,
+  migrationCompose: MigrationCompose,
   swarm: Swarm,
   nginx: Nginx,
   routes: Routes,
@@ -50,6 +52,7 @@ const PAGE_LABELS = {
   system: 'System',
   endpoints: 'Endpoints',
   migration: 'Migration',
+  migrationCompose: 'Compose Migrate',
   swarm: 'Swarm',
   nginx: 'Nginx LB',
   routes: 'Routes',
