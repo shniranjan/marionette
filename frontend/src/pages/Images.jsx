@@ -31,6 +31,13 @@ export default function Images() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('endpoint:changed', handler);
+    return () => window.removeEventListener('endpoint:changed', handler);
+  }, [load]);
+
   const { filtered, searchQuery, setSearchQuery } = useFilters(images, { searchFields: ['repoTags'] });
 
   const filteredIds = useMemo(() => filtered.map(img => img.id), [filtered]);

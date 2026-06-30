@@ -46,6 +46,13 @@ export default function ContainerDetail({ id, name, navigate }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('endpoint:changed', handler);
+    return () => window.removeEventListener('endpoint:changed', handler);
+  }, [load]);
+
   // Initialize edit labels when switching to labels tab
   useEffect(() => {
     if (tab === 'labels' && editLabels === null) {

@@ -124,6 +124,13 @@ export default function Swarm({ navigate }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('endpoint:changed', handler);
+    return () => window.removeEventListener('endpoint:changed', handler);
+  }, [load]);
+
   /* ── actions ── */
 
   const doAction = useCallback(async (actionFn, okMsg) => {
