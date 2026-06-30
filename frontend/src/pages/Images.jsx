@@ -114,28 +114,57 @@ export default function Images() {
       {filtered.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No images</div>
       ) : (
-        <div style={{ display: 'grid', gap: '12px' }}>
+        <div style={{ display: 'grid', gap: '10px' }}>
           {filtered.map((img) => {
             const tags = img.repoTags || [];
+            const primaryTag = tags.length > 0 ? tags[0] : null;
+            const { name, tag } = primaryTag ? splitImageTag(primaryTag) : { name: '<none>', tag: '' };
             const isSel = selected.has(img.id);
             return (
               <div key={img.id}
-                className="card"
-                onClick={() => handleInspect(img.id)}
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}
+                onClick={() => toggle(img)}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  cursor: 'pointer',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: isSel ? 'var(--bg-secondary, #1e293b)' : 'var(--card-bg, #0f172a)',
+                  border: isSel ? '2px solid var(--accent, #3b82f6)' : '2px solid var(--card-border, #1e293b)',
+                  transition: 'border-color 0.15s, background 0.15s',
+                }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <input
-                    type="checkbox"
-                    checked={isSel}
-                    onChange={(e) => { e.stopPropagation(); toggle(img); }}
-                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                  />
-                  <div>
-                    <div className="mono" style={{ fontWeight: 600 }}>
-                      {tags.length > 0 ? tags[0].replace(/^<none>:<none>$/, '<none>') : img.id?.substring(0, 12)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0, flex: 1 }}>
+                  <div style={{
+                    width: '22px', height: '22px', minWidth: '22px',
+                    borderRadius: '4px',
+                    background: isSel ? 'var(--accent, #3b82f6)' : 'transparent',
+                    border: isSel ? 'none' : '2px solid var(--card-border, #475569)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#fff', fontSize: '0.75rem', fontWeight: 700,
+                    transition: 'background 0.15s, border-color 0.15s',
+                  }}>
+                    {isSel ? '✓' : ''}
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '3px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {name}
+                      </span>
+                      {tag && (
+                        <span style={{
+                          fontSize: '0.65rem', fontWeight: 600, padding: '1px 7px',
+                          borderRadius: '10px', whiteSpace: 'nowrap',
+                          background: tag === 'latest' ? '#1e3a5f' : '#2a1a3f',
+                          color: tag === 'latest' ? '#60a5fa' : '#a78bfa',
+                          border: `1px solid ${tag === 'latest' ? '#3b82f6' : '#7c3aed'}33`,
+                        }}>
+                          {tag}
+                        </span>
+                      )}
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)', marginTop: '4px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--pico-muted-color)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       ID: {img.id?.substring(0, 12)} &nbsp;|&nbsp;
                       Size: {formatSize(img.size)} &nbsp;|&nbsp;
                       Created: {img.created ? new Date(img.created * 1000).toLocaleDateString() : '—'}
@@ -143,7 +172,13 @@ export default function Images() {
                     </div>
                   </div>
                 </div>
-                <span style={{ fontSize: '0.75rem', color: 'var(--pico-muted-color)' }}>Click to inspect</span>
+                <button
+                  className="btn-sm"
+                  onClick={(e) => { e.stopPropagation(); handleInspect(img.id); }}
+                  style={{ marginLeft: '12px', flexShrink: 0 }}
+                >
+                  Inspect
+                </button>
               </div>
             );
           })}
@@ -198,4 +233,17 @@ function formatSize(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/** Split "nginx:latest" into { name: "nginx", tag: "latest" } */
+function splitImageTag(full) {
+  if (!full || full === '<none>') return { name: '<none>', tag: '' };
+  const lastColon = full.lastIndexOf(':');
+  if (lastColon === -1) return { name: full, tag: 'latest' };
+  // Check if the colon is part of a port (e.g., registry:5000/image)
+  const afterColon = full.substring(lastColon + 1);
+  if (/^\d+$/.test(afterColon) || afterColon.includes('/')) {
+    return { name: full, tag: 'latest' };
+  }
+  return { name: full.substring(0, lastColon), tag: afterColon };
 }
