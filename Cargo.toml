@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "crates/relay-protocol",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"

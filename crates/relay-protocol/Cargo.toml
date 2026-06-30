@@ -1,0 +1,10 @@
+[package]
+name = "relay-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Tunnel-loom relay protocol — shared message types, operation codes, error codes, validation"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
