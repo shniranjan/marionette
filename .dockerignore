@@ -1,0 +1,40 @@
+# Rust build artifacts (can be 200MB+)
+core/target/
+
+# Node
+node_modules/
+gateway/node_modules/
+frontend/node_modules/
+frontend/dist/
+gateway/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Git
+.git/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Private (never in build context)
+.hermes/
+stacks/
+data/
+*.tar.gz
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
