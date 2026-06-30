@@ -46,6 +46,7 @@ impl EndpointRegistry {
                 status: EndpointStatus::Disconnected,
                 tags: vec!["default".to_string()],
                 cert_path: None,
+                stacks_dir: None,
             };
 
             self.db.seed_endpoints(&[ep.clone()]);
@@ -187,6 +188,7 @@ impl EndpointRegistry {
         connection: Option<String>,
         tags: Option<Vec<String>>,
         cert_path: Option<Option<String>>,
+        stacks_dir: Option<Option<String>>,
     ) -> Result<(), String> {
         let mut ep = self
             .get(id)
@@ -207,6 +209,9 @@ impl EndpointRegistry {
         }
         if let Some(cert_path) = cert_path {
             ep.cert_path = cert_path;
+        }
+        if let Some(stacks_dir) = stacks_dir {
+            ep.stacks_dir = stacks_dir;
         }
 
         // Reconnect if connection or certs changed

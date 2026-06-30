@@ -38,6 +38,8 @@ pub struct EndpointCreateBody {
     pub tags: Vec<String>,
     #[serde(default)]
     pub cert_path: Option<String>,
+    #[serde(default)]
+    pub stacks_dir: Option<String>,
 }
 
 pub async fn create_endpoint(
@@ -52,6 +54,7 @@ pub async fn create_endpoint(
         status: EndpointStatus::Connected,
         tags: body.tags,
         cert_path: body.cert_path.clone(),
+        stacks_dir: body.stacks_dir.clone(),
     };
 
     // Registry handles duplicate name check, connection test, persist, and client cache
@@ -121,6 +124,8 @@ pub struct EndpointUpdateBody {
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub cert_path: Option<Option<String>>,
+    #[serde(default)]
+    pub stacks_dir: Option<Option<String>>,
 }
 
 pub async fn update_endpoint(
@@ -144,7 +149,7 @@ pub async fn update_endpoint(
     // connection test, persistence, and client cache update
     state
         .registry
-        .update(&id, body.name, body.connection, body.tags, body.cert_path)
+        .update(&id, body.name, body.connection, body.tags, body.cert_path, body.stacks_dir)
         .await
         .map_err(|e| {
             if e.contains("not found") {

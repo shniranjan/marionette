@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[deprecated(note = "Use unified_migration::MigrationPlan")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MigrationPlan {
@@ -19,7 +20,6 @@ pub struct MigrationPlan {
     pub env_vars: Vec<String>,
     pub has_compose_secrets: bool,
     pub start_on_target: bool,
-    pub verify_connectivity: bool,
     // Wave 1: Strategy fields
     #[serde(default)]
     pub compression: String,
@@ -51,6 +51,7 @@ pub struct MigrationVolume {
     pub skip: bool,
 }
 
+#[deprecated(note = "Use unified_migration::UnifiedDatabase")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbConnection {
@@ -81,8 +82,6 @@ pub struct CommandExecutionResult {
 pub struct PostOptions {
     #[serde(default)]
     pub start_on_target: bool,
-    #[serde(default)]
-    pub verify_connectivity: bool,
     #[serde(default)]
     pub remove_from_source: bool,
     #[serde(default)]

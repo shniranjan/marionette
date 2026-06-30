@@ -66,26 +66,6 @@ pub struct BatchTransferResult {
     pub status: String, // "success" | "partial_success" | "failed"
 }
 
-/// Errors that can occur during transfer.
-#[derive(Debug)]
-pub enum TransferError {
-    Docker(String),
-    Io(String),
-    Timeout(String),
-    VolumeNotFound(String),
-}
-
-impl std::fmt::Display for TransferError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Docker(e) => write!(f, "Docker error: {}", e),
-            Self::Io(e) => write!(f, "I/O error: {}", e),
-            Self::Timeout(e) => write!(f, "Timeout: {}", e),
-            Self::VolumeNotFound(v) => write!(f, "Volume not found: {}", v),
-        }
-    }
-}
-
 /// Compression flag mapping for tar commands.
 fn tar_compression_flag(compression: &str) -> (&str, &str) {
     match compression {

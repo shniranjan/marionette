@@ -1,24 +1,22 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
-import Modal from '../components/Modal';
 import Spinner from '../components/Spinner';
+import Modal from '../components/Modal';
 import { useToast } from '../components/Toast';
 import ConnectionReview from '../components/ConnectionReview';
 import MigrationPlan from '../components/MigrationPlan';
 import VolumeInspector from '../components/VolumeInspector';
+import MigrationEditor from '../components/MigrationEditor';
+import PreflightPanel from '../components/PreflightPanel';
+import { getCurrentEndpoint, setEndpoint } from '../components/EndpointSwitcher';
 
-const TOTAL_STEPS = 9;
-
+const TOTAL_STEPS = 5;
 const STEP_LABELS = [
-  'Select Source',
-  'Analyze',
-  'Strategy',
-  'Credentials',
-  'Connection Fixes',
-  'Target',
-  'Dry Run',
-  'Execute',
-  'Verify',
+  'Source',
+  'Discovery',
+  'Review & Edit',
+  'Pre-Flight',
+  'Execute & Verify',
 ];
 
 /** Convert backend string-array env vars to object array for frontend display */
@@ -101,7 +99,7 @@ function StepIndicator({ currentStep, completedSteps = new Set() }) {
                        isComplete ? 'var(--text-primary)' : 'var(--text-secondary)',
                 fontWeight: isCurrent ? 600 : 400,
                 textAlign: 'center',
-                maxWidth: '60px',
+                maxWidth: '70px',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -119,63 +117,54 @@ function StepIndicator({ currentStep, completedSteps = new Set() }) {
 export default function Migration({ navigate }) {
   const toast = useToast();
 
-  // Wizard state
+  // ── Wizard state ──
   const [step, setStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Step 1 — Source
+  // ── Step 1: Source selection ──
+  const [migrationType, setMigrationType] = useState(null); // 'container' | 'compose'
   const [endpoints, setEndpoints] = useState([]);
   const [sourceEndpoint, setSourceEndpoint] = useState('');
+
+  // Container-specific
   const [containers, setContainers] = useState([]);
   const [containerSearch, setContainerSearch] = useState('');
   const [selectedContainer, setSelectedContainer] = useState(null);
 
-  // Step 2 — Analysis results
-  const [analysis, setAnalysis] = useState(null);
+  // Compose-specific
+  const [targetEndpoint, setTargetEndpoint] = useState('');
+  const [stackName, setStackName] = useState('');
 
-  // Step 3 — Strategy
+  // ── Step 2: Discovery result ──
+  const [plan, setPlan] = useState(null);
+  const [analysis, setAnalysis] = useState(null); // old container analysis for backward compat
+
+  // ── Step 3: Review & Edit (handled by MigrationEditor) ──
+
+  // ── Step 4: Pre-flight (handled by PreflightPanel) ──
+
+  // ── Step 5: Execute ──
+  const [execPhase, setExecPhase] = useState('pending');
+  const [execCommands, setExecCommands] = useState([]);
+  const [execResults, setExecResults] = useState({});
+  const [execStartTime, setExecStartTime] = useState(null);
+  const [verification, setVerification] = useState(null);
+
+  // Old container path state (reused for backward compat)
   const [strategy, setStrategy] = useState({});
   const [transferMethod, setTransferMethod] = useState('rsync-over-ssh');
   const [compression, setCompression] = useState('pigz');
   const [postOptions, setPostOptions] = useState({});
   const [volumeOverrides, setVolumeOverrides] = useState({});
-
-  // Step 4 — Credentials
-  const [credentialsRevealed, setCredentialsRevealed] = useState({});
-  const [credRevealConfirm, setCredRevealConfirm] = useState(null);
-
-  // Step 5 — Connection fixes
   const [connectionResolutions, setConnectionResolutions] = useState({});
-
-  // Step 6 — Target
-  const [targetEndpoints, setTargetEndpoints] = useState([]);
-  const [targetEndpoint, setTargetEndpoint] = useState('');
-  const [targetStackName, setTargetStackName] = useState('');
-  const [targetInfo, setTargetInfo] = useState(null);
-
-  // Step 7 — Dry run
+  const [migrationId, setMigrationId] = useState(null);
+  const [targetStackNameLegacy, setTargetStackNameLegacy] = useState('');
   const [dryRunResult, setDryRunResult] = useState(null);
 
-  // Step 8 — Execute
-  const [execPhase, setExecPhase] = useState('pending'); // pending, running, paused, done
-  const [execCommands, setExecCommands] = useState([]);
-  const [currentCommandGroup, setCurrentCommandGroup] = useState(0);
-  const [execResults, setExecResults] = useState({});
-  const [execStartTime, setExecStartTime] = useState(null);
-
-  // Step 9 — Verification
-  const [verification, setVerification] = useState(null);
-
-  // Shared state
-  const [migrationPlan, setMigrationPlan] = useState(null);
-  const [migrationId, setMigrationId] = useState(null);
+  // Audit
   const [revealAudit, setRevealAudit] = useState([]);
-
-  // Volume inspector
-  const [inspectVolume, setInspectVolume] = useState(null);
-
   const auditLog = useCallback((action, detail) => {
     const entry = { timestamp: new Date().toISOString(), action, detail };
     const audit = JSON.parse(localStorage.getItem('marionette-audit-log') || '[]');
@@ -184,17 +173,31 @@ export default function Migration({ navigate }) {
     setRevealAudit(prev => [...prev, entry]);
   }, []);
 
-  // Load endpoints on mount
+  // Volume inspector
+  const [inspectVolume, setInspectVolume] = useState(null);
+
+  // ── Load endpoints on mount ──
   useEffect(() => {
     (async () => {
       try {
         const data = await api.get('/api/endpoints');
         const eps = Array.isArray(data) ? data : (data?.endpoints || []);
         setEndpoints(eps);
-        setTargetEndpoints(eps);
       } catch {/* ignore */}
     })();
   }, []);
+
+  // Auto-fill target for compose
+  useEffect(() => {
+    if (migrationType === 'compose' && !targetEndpoint && endpoints.length > 0) {
+      const others = endpoints.filter(e => (e.id || e.Id) !== sourceEndpoint);
+      if (others.length === 1) {
+        setTargetEndpoint(others[0].id || others[0].Id);
+      }
+    }
+  }, [migrationType, endpoints, sourceEndpoint, targetEndpoint]);
+
+  // ── STEP 1: Source selection ──
 
   const filteredContainers = containers.filter(c => {
     const name = (c.Name || c.name || '').toLowerCase();
@@ -203,8 +206,7 @@ export default function Migration({ navigate }) {
     return !q || name.includes(q) || img.includes(q);
   });
 
-  // === STEP 1: Select Source ===
-  const handleSourceSelect = async (epId) => {
+  const handleSourceSelectContainer = async (epId) => {
     setSourceEndpoint(epId);
     setSelectedContainer(null);
     setContainers([]);
@@ -224,253 +226,344 @@ export default function Migration({ navigate }) {
     setSelectedContainer(container);
   };
 
-  const handleAnalyze = async () => {
-    if (!sourceEndpoint || !selectedContainer) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.post('/api/migration/analyze', {
-        source_endpoint: sourceEndpoint,
-        container_id: selectedContainer.Id || selectedContainer.id,
-      });
-      setAnalysis({ ...result, envVars: parseEnvVars(result.envVars || []) });
-      setCompletedSteps(prev => new Set([...prev, 1]));
-      setStep(2);
-    } catch (err) {
-      toast('Analysis failed: ' + err.message, 'error');
-    } finally {
-      setLoading(false);
+  const handleSourceChangeCompose = useCallback((epId) => {
+    setSourceEndpoint(epId);
+    setEndpoint(epId);
+  }, []);
+
+  // ── STEP 2: Discovery ──
+
+  const handleDiscover = async () => {
+    if (migrationType === 'container') {
+      if (!sourceEndpoint || !selectedContainer) return;
+      setLoading(true);
+      setError(null);
+      try {
+        // Try unified endpoint first
+        const result = await api.post('/api/migration/unified/analyze', {
+          migrationType: 'container',
+          sourceEndpoint,
+          targetEndpoint: targetEndpoint || 'local',
+          containerId: selectedContainer.Id || selectedContainer.id,
+          containerName: (selectedContainer.Name || selectedContainer.name || '').replace(/^\//, ''),
+        });
+        setPlan(result);
+        setAnalysis({ ...result, envVars: parseEnvVars(result.envVars || []) });
+        setCompletedSteps(prev => new Set([...prev, 1]));
+        setStep(2);
+      } catch (err) {
+        // Fall back to old analyze
+        try {
+          const result = await api.post('/api/migration/analyze', {
+            source_endpoint: sourceEndpoint,
+            container_id: selectedContainer.Id || selectedContainer.id,
+          });
+          setAnalysis({ ...result, envVars: parseEnvVars(result.envVars || []) });
+          // Convert old analysis to unified plan shape for editor
+          const unifiedPlan = {
+            planId: result.migrationId || 'legacy-' + Date.now(),
+            migrationType: 'container',
+            sourceEndpoint,
+            targetEndpoint: targetEndpoint || '',
+            stackName: (selectedContainer.Name || selectedContainer.name || '').replace(/^\//, ''),
+            targetStackName: '',
+            sourceArchitecture: result.sourceArchitecture,
+            targetArchitecture: result.targetArchitecture,
+            volumes: (result.volumes || []).map(v => ({
+              sourceName: v.name,
+              targetName: v.name,
+              driver: v.driver,
+              targetDriver: v.driver,
+              sizeBytes: v.sizeBytes,
+              mountPoint: v.mountPoint,
+              skip: false,
+              transferMethod: v.transferMethod,
+            })),
+            databases: (result.dbConnections || []).map(c => ({
+              serviceName: c.varName || c.name || result.containerName || '',
+              dbType: c.dbType || {},
+              username: c.username,
+              password: '',
+              passwordMasked: c.valueMasked,
+              port: c.port,
+              databaseName: c.databaseName,
+              image: result.image || '',
+              version: '',
+              preTransferCommands: [],
+              postTransferCommands: [],
+              hasReplication: false,
+              connectivityVerified: false,
+            })),
+            envVars: (result.envVars || []).map(e => ({
+              serviceName: result.containerName || '',
+              varName: e.name,
+              sourceValue: e.value,
+              targetValue: e.value,
+              isSensitive: e.isSensitive,
+              willBreak: false,
+              breakReason: '',
+            })),
+            images: [],
+            warnings: result.warnings || [],
+            estimatedSizeBytes: result.estimatedSizeBytes || 0,
+            createdAt: new Date().toISOString(),
+          };
+          setPlan(unifiedPlan);
+          setCompletedSteps(prev => new Set([...prev, 1]));
+          setStep(2);
+        } catch (err2) {
+          toast('Analysis failed: ' + (err2.message || err.message), 'error');
+        }
+      } finally {
+        setLoading(false);
+      }
+    } else if (migrationType === 'compose') {
+      if (!sourceEndpoint || !targetEndpoint) {
+        toast('Select both source and target endpoints', 'error');
+        return;
+      }
+      if (!stackName.trim()) {
+        toast('Enter a stack name', 'error');
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await api.post('/api/migration/unified/analyze', {
+          migrationType: 'compose',
+          sourceEndpoint,
+          targetEndpoint,
+          stackName: stackName.trim(),
+        });
+        setPlan(result);
+        setCompletedSteps(prev => new Set([...prev, 1]));
+        setStep(2);
+        toast('Analysis complete', 'success');
+      } catch (err) {
+        // Fall back to old compose analyze
+        try {
+          const result = await api.post('/migration/compose/analyze', {
+            sourceEndpoint,
+            targetEndpoint,
+            stackName: stackName.trim(),
+          });
+          // Convert old compose diff to unified plan shape
+          const diff = result.diff || {};
+          const unifiedPlan = {
+            planId: 'legacy-compose-' + Date.now(),
+            migrationType: 'compose',
+            sourceEndpoint,
+            targetEndpoint,
+            stackName: stackName.trim(),
+            targetStackName: stackName.trim(),
+            sourceArchitecture: result.sourceArchitecture,
+            targetArchitecture: result.targetArchitecture,
+            volumes: (diff.volumeChanges || []).map(vc => ({
+              sourceName: vc.sourceName || vc.name,
+              targetName: vc.name,
+              driver: vc.driver,
+              targetDriver: vc.driver,
+              sizeBytes: vc.sizeBytes,
+              mountPoint: '',
+              skip: vc.changeType === 'removed',
+              transferMethod: '',
+            })),
+            databases: (diff.databaseServices || []).map(ds => ({
+              serviceName: ds.serviceName,
+              dbType: ds.dbType || {},
+              username: ds.username,
+              password: '',
+              passwordMasked: ds.passwordMasked,
+              port: ds.port,
+              databaseName: ds.databaseName,
+              image: ds.image || '',
+              version: ds.version,
+              preTransferCommands: ds.preTransferCommands || [],
+              postTransferCommands: ds.postTransferCommands || [],
+              hasReplication: ds.hasReplication || false,
+              connectivityVerified: false,
+            })),
+            envVars: (diff.envChanges || []).map(ec => ({
+              serviceName: ec.serviceName,
+              varName: ec.varName,
+              sourceValue: ec.oldValue,
+              targetValue: ec.newValue || ec.oldValue,
+              isSensitive: ec.isSensitive || false,
+              willBreak: false,
+              breakReason: '',
+            })),
+            services: (diff.serviceChanges || []).map(sc => ({
+              name: sc.name,
+              action: sc.changeType === 'removed' ? 'Skip' : 'Migrate',
+              imageOverride: sc.imageNew,
+            })),
+            images: (diff.imageChanges || []).map(ic => ({
+              serviceName: ic.serviceName,
+              oldImage: ic.oldImage,
+              newImage: ic.newImage,
+              majorVersionChange: ic.majorVersionChange || false,
+            })),
+            warnings: diff.warnings || result.warnings || [],
+            estimatedSizeBytes: 0,
+            createdAt: new Date().toISOString(),
+          };
+          setPlan(unifiedPlan);
+          setCompletedSteps(prev => new Set([...prev, 1]));
+          setStep(2);
+          toast('Analysis complete (legacy mode)', 'success');
+        } catch (err2) {
+          toast('Analysis failed: ' + (err2.message || err.message), 'error');
+        }
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
-  // === STEP 3: Strategy ===
-  const handleStrategyUpdate = useCallback((s) => {
-    setStrategy(s);
-    if (s.transferMethod) setTransferMethod(s.transferMethod);
-    if (s.compression) setCompression(s.compression);
-    if (s.post_options) setPostOptions(s.post_options);
-    if (s.volume_overrides) setVolumeOverrides(s.volume_overrides);
-  }, []);
+  // ── STEP 2: Discovery result display ──
+  const renderDiscoveryResult = () => {
+    if (!plan) return null;
 
-  const handleProceedFromStrategy = () => {
+    return (
+      <div style={{ display: 'grid', gap: '16px' }}>
+        {/* Summary card */}
+        <div className="card">
+          <h3>Migration Plan Summary</h3>
+          <table>
+            <tbody>
+              <tr><td style={{ color: 'var(--text-secondary)', width: '140px' }}>Type</td><td>
+                <span style={{
+                  display: 'inline-block', padding: '2px 10px', borderRadius: '10px',
+                  background: 'var(--accent-dim)', color: 'var(--accent)',
+                  fontSize: '0.8rem', fontWeight: 600,
+                }}>
+                  {plan.migrationType === 'compose' ? '📚 Compose' : '📦 Container'}
+                </span>
+              </td></tr>
+              <tr><td style={{ color: 'var(--text-secondary)' }}>Source</td><td>{plan.sourceEndpoint}</td></tr>
+              <tr><td style={{ color: 'var(--text-secondary)' }}>Target</td><td>{plan.targetEndpoint}</td></tr>
+              <tr><td style={{ color: 'var(--text-secondary)' }}>Stack</td><td className="mono">{plan.stackName}</td></tr>
+              <tr><td style={{ color: 'var(--text-secondary)' }}>Volumes</td><td>{plan.volumes?.length || 0}</td></tr>
+              <tr><td style={{ color: 'var(--text-secondary)' }}>Databases</td><td>{plan.databases?.length || 0}</td></tr>
+              <tr><td style={{ color: 'var(--text-secondary)' }}>Env Vars</td><td>{plan.envVars?.length || 0}</td></tr>
+              {plan.estimatedSizeBytes > 0 && (
+                <tr><td style={{ color: 'var(--text-secondary)' }}>Est. Size</td><td className="mono">
+                  {(plan.estimatedSizeBytes / 1073741824).toFixed(1)} GB
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Warnings */}
+        {(plan.warnings || []).length > 0 && (
+          <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
+            <h3 style={{ color: 'var(--yellow)' }}>⚠ Warnings</h3>
+            {plan.warnings.map((w, i) => (
+              <div key={i} style={{ padding: '4px 0', fontSize: '0.85rem', color: 'var(--yellow)' }}>
+                ⚠ {w}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── STEP 3: Review & Edit ──
+  const handleEditorSave = useCallback((updatedPlan) => {
+    if (updatedPlan) {
+      setPlan(updatedPlan);
+    }
+    toast('Plan saved', 'success');
+  }, [toast]);
+
+  const handleEditorProceed = useCallback(() => {
     setCompletedSteps(prev => new Set([...prev, 3]));
     setStep(4);
-  };
-
-  // === STEP 4: Credentials ===
-  const handleRevealCredential = (varName) => {
-    if (credRevealConfirm !== varName) {
-      setCredRevealConfirm(varName);
-      return;
-    }
-    setCredentialsRevealed(prev => ({ ...prev, [varName]: true }));
-    setCredRevealConfirm(null);
-    auditLog('reveal_credential', { variable: varName });
-  };
-
-  const handleCredentialsDone = () => {
-    setCompletedSteps(prev => new Set([...prev, 4]));
-    setStep(5);
-  };
-
-  // === STEP 5: Connection Fixes ===
-  const handleConnectionUpdate = useCallback((varName, action) => {
-    setConnectionResolutions(prev => ({
-      ...prev,
-      [varName]: { action, resolved: true },
-    }));
   }, []);
 
-  const allCriticalResolved = () => {
-    const conns = analysis?.dbConnections || [];
-    return conns.filter(c => c.willBreak).every(c => connectionResolutions[c.varName]?.resolved);
-  };
+  // ── STEP 4: Pre-flight ──
+  const handlePreflightContinue = useCallback(() => {
+    setCompletedSteps(prev => new Set([...prev, 4]));
+    setStep(5);
+  }, []);
 
-  const handleConnectionFixesDone = () => {
-    if (!allCriticalResolved()) {
-      toast('Resolve all critical connections first', 'error');
-      return;
-    }
-    setCompletedSteps(prev => new Set([...prev, 5]));
-    setStep(6);
-  };
+  const handlePreflightBack = useCallback(() => {
+    setStep(3);
+  }, []);
 
-  // === STEP 6: Target ===
-  const handleTargetSelect = async (epId) => {
-    setTargetEndpoint(epId);
-    setTargetInfo(null);
-    if (!epId) return;
-    try {
-      const data = await api.get(`/api/endpoints/${epId}/info`);
-      setTargetInfo(data);
-    } catch {/* ignore */}
-  };
-
-  const handleTargetNext = async () => {
-    if (!targetEndpoint) {
-      toast('Select a target endpoint', 'error');
-      return;
-    }
-    setCompletedSteps(prev => new Set([...prev, 6]));
-    setStep(7);
-  };
-
-  // === STEP 7: Dry Run ===
-  const handleDryRun = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.post('/api/migration/dry-run', {
-        source_endpoint: sourceEndpoint,
-        target_endpoint: targetEndpoint,
-        container_id: selectedContainer?.Id || selectedContainer?.id,
-        transfer_method: transferMethod,
-        compression,
-        post_options: postOptions,
-        connection_resolutions: connectionResolutions,
-        target_stack_name: targetStackName || undefined,
-        volume_overrides: volumeOverrides,
-      });
-      setDryRunResult(result.plan);
-      setMigrationPlan(result.plan);
-      setMigrationId(result.plan.migrationId);
-    } catch (err) {
-      toast('Dry run failed: ' + err.message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleProceedToExecute = () => {
-    setCompletedSteps(prev => new Set([...prev, 7]));
-    setStep(8);
-    setExecPhase('pending');
-    setCurrentCommandGroup(0);
-    setExecResults({});
-    setExecCommands(dryRunResult?.commands || []);
-    setExecStartTime(Date.now());
-  };
-
-  // === STEP 8: Execute ===
+  // ── STEP 5: Execute ──
   const handleStartExecution = async () => {
     setExecPhase('running');
-    setCurrentCommandGroup(0);
     setExecStartTime(Date.now());
     setExecResults({});
 
     try {
-      const result = await api.post(`/api/migration/${migrationId}/execute`, {});
-      const results = result.results || [];
+      if (plan?.planId && !plan.planId.startsWith('legacy-')) {
+        // Unified execution
+        const result = await api.post(`/api/migration/unified/plan/${plan.planId}/execute`, {});
+        const results = result.results || [];
+        const resultMap = {};
+        results.forEach((r, i) => {
+          resultMap[i] = {
+            time: Date.now() - execStartTime,
+            status: r.exitCode === 0 ? 'done' : 'failed',
+            command: r.command,
+            stdout: r.stdout,
+            stderr: r.stderr,
+            exit_code: r.exitCode,
+          };
+        });
+        setExecResults(resultMap);
+        const allSuccess = results.every(r => r.exitCode === 0);
+        setExecPhase(allSuccess ? 'done' : 'completed_with_errors');
+        setVerification(result.verification || result);
+      } else {
+        // Legacy container execution
+        await api.post(`/api/migration/${migrationId || plan?.planId?.replace('legacy-', '')}/execute`, {});
+        setExecPhase('done');
+        setVerification({ status: 'completed' });
+      }
 
-      // Map results by index
-      const resultMap = {};
-      results.forEach((r, i) => {
-        resultMap[r.index !== undefined ? r.index : i] = {
-          time: Date.now() - execStartTime,
-          status: r.exitCode === 0 ? 'done' : 'failed',
-          command: r.command,
-          stdout: r.stdout,
-          stderr: r.stderr,
-          exit_code: r.exitCode,
-        };
-      });
-      setExecResults(resultMap);
-
-      const allSuccess = results.every(r => r.exitCode === 0);
-      setExecPhase(allSuccess ? 'done' : 'completed_with_errors');
-      
-      // Fetch updated migration plan
-      try {
-        if (migrationId) {
-          const plan = await api.get(`/api/migration/${migrationId}`);
-          setVerification(plan);
-        }
-      } catch {/* ignore */}
-
-      setCompletedSteps(prev => new Set([...prev, 8]));
-      // Auto-advance to step 9
-      setStep(9);
+      setCompletedSteps(prev => new Set([...prev, 5]));
     } catch (err) {
       toast('Execution failed: ' + err.message, 'error');
       setExecPhase('pending');
     }
   };
 
-  const handleCommandGroupDone = async () => {
-    const now = Date.now();
-    setExecResults(prev => ({
-      ...prev,
-      [currentCommandGroup]: { time: now - execStartTime, status: 'done' },
-    }));
-
-    if (currentCommandGroup + 1 >= execCommands.length) {
-      setExecPhase('done');
-      try {
-        // Fetch migration result
-        if (migrationId) {
-          const result = await api.get(`/api/migration/${migrationId}`);
-          setVerification(result);
-        }
-      } catch {/* ignore */}
-      setCompletedSteps(prev => new Set([...prev, 8]));
-      setStep(9);
-    } else {
-      setCurrentCommandGroup(prev => prev + 1);
-    }
-  };
-
-  const handleCancelExecution = () => {
-    setExecPhase('pending');
-    toast('Execution cancelled at safe point', 'info');
-  };
-
-  // === STEP 9: Verify ===
-  const handlePostMigration = async (action) => {
-    try {
-      if (action === 'remove_source') {
-        await api.delete(`/api/containers/${selectedContainer?.Id || selectedContainer?.id}`);
-        toast('Container removed from source', 'success');
-      } else if (action === 'rollback') {
-        await api.post(`/api/migration/${migrationId}/rollback`);
-        toast('Rollback initiated', 'info');
-      }
-    } catch (err) {
-      toast('Action failed: ' + err.message, 'error');
-    }
-  };
-
-  const handleDone = () => {
-    navigate('dashboard');
-    toast('Migration wizard complete 🎉', 'success');
-  };
-
-  // Navigation helpers
+  // ── Navigation ──
   const canGoNext = () => {
     switch (step) {
-      case 1: return selectedContainer !== null;
-      case 2: return analysis !== null;
+      case 1: return !!migrationType;
+      case 2: return !!plan;
       case 3: return true;
-      case 4: return true;
-      case 5: return allCriticalResolved();
-      case 6: return targetEndpoint !== '';
-      case 7: return dryRunResult !== null;
-      case 8: return execPhase === 'done' || execPhase === 'completed_with_errors';
-      case 9: return true;
+      case 4: return true; // Preflight has its own continue
+      case 5: return execPhase === 'done' || execPhase === 'completed_with_errors';
       default: return false;
     }
   };
 
   const handleNext = () => {
     switch (step) {
-      case 1: handleAnalyze(); break;
+      case 1: {
+        // Validate before discovery
+        if (migrationType === 'container' && !selectedContainer) {
+          toast('Select a container first', 'error');
+          return;
+        }
+        if (migrationType === 'compose' && !stackName.trim()) {
+          toast('Enter a stack name', 'error');
+          return;
+        }
+        handleDiscover();
+        break;
+      }
       case 2: setCompletedSteps(prev => new Set([...prev, 2])); setStep(3); break;
-      case 3: handleProceedFromStrategy(); break;
-      case 4: handleCredentialsDone(); break;
-      case 5: handleConnectionFixesDone(); break;
-      case 6: handleTargetNext(); break;
-      case 7: handleProceedToExecute(); break;
-      case 8: break; // Manual
-      case 9: handleDone(); break;
+      case 3: handleEditorProceed(); break;
+      case 4: handlePreflightContinue(); break;
+      case 5: handleDone(); break;
     }
   };
 
@@ -478,893 +571,520 @@ export default function Migration({ navigate }) {
     if (step > 1) setStep(step - 1);
   };
 
-  // === RENDER ===
+  const handleDone = () => {
+    navigate('dashboard');
+    toast('Migration wizard complete 🎉', 'success');
+  };
 
+  // ── Post-migration actions (legacy container path) ──
+  const handlePostMigration = async (action) => {
+    try {
+      if (action === 'remove_source') {
+        await api.delete(`/api/containers/${selectedContainer?.Id || selectedContainer?.id}`);
+        toast('Container removed from source', 'success');
+      } else if (action === 'rollback') {
+        if (migrationId) {
+          await api.post(`/api/migration/${migrationId}/rollback`);
+        }
+        toast('Rollback initiated', 'info');
+      }
+    } catch (err) {
+      toast('Action failed: ' + err.message, 'error');
+    }
+  };
+
+  // ── Render Step Content ──
   const renderStepContent = () => {
     switch (step) {
-      // ── STEP 1: Select Source ──
+      // ── STEP 1: Source Type Selection ──
       case 1:
         return (
-          <div style={{ display: 'grid', gap: '16px' }}>
-            <div className="card">
-              <h3>Source Endpoint</h3>
-              <select
-                value={sourceEndpoint}
-                onChange={e => handleSourceSelect(e.target.value)}
-                style={{ width: '100%', marginTop: '8px' }}
+          <div style={{ display: 'grid', gap: '24px' }}>
+            {/* Type selector cards */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '16px',
+            }}>
+              <div
+                className="card"
+                onClick={() => setMigrationType('container')}
+                style={{
+                  cursor: 'pointer',
+                  border: migrationType === 'container' ? '2px solid var(--accent)' : '2px solid var(--border)',
+                  background: migrationType === 'container' ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
+                  textAlign: 'center',
+                  padding: '24px',
+                  transition: 'all 0.15s',
+                }}
               >
-                <option value="">— Select source endpoint —</option>
-                <option value="local">Local</option>
-                {endpoints.map(ep => (
-                  <option key={ep.id || ep.Id} value={ep.id || ep.Id}>
-                    {ep.name || ep.Name}
-                  </option>
-                ))}
-              </select>
+                <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📦</div>
+                <h3 style={{ margin: '0 0 4px' }}>Container Migration</h3>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Single container cold migration with volume transfer
+                </div>
+              </div>
+              <div
+                className="card"
+                onClick={() => setMigrationType('compose')}
+                style={{
+                  cursor: 'pointer',
+                  border: migrationType === 'compose' ? '2px solid var(--accent)' : '2px solid var(--border)',
+                  background: migrationType === 'compose' ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
+                  textAlign: 'center',
+                  padding: '24px',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📚</div>
+                <h3 style={{ margin: '0 0 4px' }}>Compose Migration</h3>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Full Docker Compose stack migration between endpoints
+                </div>
+              </div>
             </div>
 
-            {sourceEndpoint && (
+            {/* Container-specific form */}
+            {migrationType === 'container' && (
               <div className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <h3 style={{ margin: 0 }}>Containers</h3>
+                <h3>Container Source</h3>
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                    Source Endpoint
+                  </label>
+                  <select
+                    value={sourceEndpoint}
+                    onChange={e => handleSourceSelectContainer(e.target.value)}
+                    style={{ width: '100%' }}
+                  >
+                    <option value="">— Select source endpoint —</option>
+                    <option value="local">Local</option>
+                    {endpoints.map(ep => (
+                      <option key={ep.id || ep.Id} value={ep.id || ep.Id}>
+                        {ep.name || ep.Name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {sourceEndpoint && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Containers</span>
+                      <input
+                        type="text"
+                        placeholder="Search containers..."
+                        value={containerSearch}
+                        onChange={e => setContainerSearch(e.target.value)}
+                        style={{ width: '240px' }}
+                      />
+                    </div>
+                    {loading ? (
+                      <div style={{ textAlign: 'center', padding: '24px' }}><Spinner /></div>
+                    ) : containers.length === 0 ? (
+                      <div style={{ color: 'var(--text-secondary)', padding: '24px', textAlign: 'center' }}>
+                        No containers found on this endpoint
+                      </div>
+                    ) : (
+                      <div style={{ maxHeight: '350px', overflow: 'auto' }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th style={{ width: '30px' }}></th>
+                              <th>Name</th>
+                              <th>Image</th>
+                              <th>State</th>
+                              <th>Stack</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredContainers.map(c => {
+                              const name = (c.Name || c.name || '').replace(/^\//, '');
+                              const isCompose = (c.Labels || c.labels || {})['com.docker.compose.project'];
+                              const selected = selectedContainer && (selectedContainer.Id || selectedContainer.id) === (c.Id || c.id);
+                              return (
+                                <tr
+                                  key={c.Id || c.id}
+                                  onClick={() => handleContainerSelect(c)}
+                                  style={{
+                                    cursor: 'pointer',
+                                    background: selected ? 'var(--bg-tertiary)' : 'transparent',
+                                    borderLeft: selected ? '3px solid var(--accent)' : '3px solid transparent',
+                                  }}
+                                >
+                                  <td>
+                                    <input
+                                      type="radio"
+                                      checked={!!selected}
+                                      onChange={() => handleContainerSelect(c)}
+                                      style={{ accentColor: 'var(--accent)' }}
+                                    />
+                                  </td>
+                                  <td className="mono" style={{ fontWeight: 500, fontSize: '0.85rem' }}>{name}</td>
+                                  <td className="mono" style={{ fontSize: '0.8rem' }}>{c.Image || c.image || '—'}</td>
+                                  <td>
+                                    <span style={{
+                                      display: 'inline-block', padding: '2px 10px', borderRadius: '12px',
+                                      fontSize: '0.7rem', fontWeight: 600,
+                                      color: (c.State || c.state || '').toLowerCase() === 'running' ? 'var(--green)' : 'var(--red)',
+                                      background: (c.State || c.state || '').toLowerCase() === 'running' ? 'var(--green-dim)' : 'var(--red-dim)',
+                                    }}>
+                                      {c.State || c.state || 'unknown'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {isCompose ? (
+                                      <span style={{
+                                        display: 'inline-block', padding: '1px 8px', borderRadius: '10px',
+                                        background: 'var(--bg-tertiary)', fontSize: '0.7rem', color: 'var(--accent)',
+                                      }}>
+                                        📚 {isCompose}
+                                      </span>
+                                    ) : <span className="text-secondary">—</span>}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {selectedContainer && (
+                      <div style={{ marginTop: '12px', padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                        <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+                          Selected: {(selectedContainer.Name || selectedContainer.name || '').replace(/^\//, '')}
+                        </div>
+                        <div className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                          Image: {selectedContainer.Image || selectedContainer.image}
+                        </div>
+                        {(() => {
+                          const labels = selectedContainer.Labels || selectedContainer.labels || {};
+                          const project = labels['com.docker.compose.project'];
+                          if (project) {
+                            return (
+                              <div style={{ marginTop: '8px', padding: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', fontSize: '0.8rem' }}>
+                                <span style={{ color: 'var(--accent)' }}>📚</span> This container is part of Compose stack <strong>{project}</strong>.
+                                Consider migrating the entire stack.
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Compose-specific form */}
+            {migrationType === 'compose' && (
+              <div className="card">
+                <h3>Compose Source</h3>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '16px',
+                  marginBottom: '16px',
+                }}>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                      Source Endpoint
+                    </label>
+                    <select value={sourceEndpoint} onChange={e => handleSourceChangeCompose(e.target.value)} style={{ width: '100%' }}>
+                      <option value="">— Select endpoint —</option>
+                      <option value="local">Local</option>
+                      {endpoints.map(ep => (
+                        <option key={ep.id || ep.Id} value={ep.id || ep.Id}>{ep.name || ep.Name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                      Target Endpoint
+                    </label>
+                    <select value={targetEndpoint} onChange={e => setTargetEndpoint(e.target.value)} style={{ width: '100%' }}>
+                      <option value="">— Select endpoint —</option>
+                      <option value="local">Local</option>
+                      {endpoints.filter(ep => (ep.id || ep.Id) !== sourceEndpoint).map(ep => (
+                        <option key={ep.id || ep.Id} value={ep.id || ep.Id}>{ep.name || ep.Name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                    Stack Name
+                  </label>
                   <input
                     type="text"
-                    placeholder="Search containers..."
-                    value={containerSearch}
-                    onChange={e => setContainerSearch(e.target.value)}
-                    style={{ width: '240px' }}
+                    value={stackName}
+                    onChange={e => setStackName(e.target.value)}
+                    placeholder="e.g., wordpress, monitoring, myapp"
+                    style={{ width: '100%' }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleNext(); }}
                   />
                 </div>
-                {loading ? (
-                  <div className="loading-center"><div className="spinner" /></div>
-                ) : containers.length === 0 ? (
-                  <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>
-                    No containers found on this endpoint
-                  </div>
-                ) : (
-                  <div style={{ maxHeight: '400px', overflow: 'auto' }}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th style={{ width: '30px' }}></th>
-                          <th>Name</th>
-                          <th>Image</th>
-                          <th>State</th>
-                          <th>Stack</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredContainers.map(c => {
-                          const name = (c.Name || c.name || '').replace(/^\//, '');
-                          const isCompose = (c.Labels || c.labels || {})['com.docker.compose.project'];
-                          const selected = selectedContainer && (selectedContainer.Id || selectedContainer.id) === (c.Id || c.id);
-                          return (
-                            <tr
-                              key={c.Id || c.id}
-                              onClick={() => handleContainerSelect(c)}
-                              style={{
-                                cursor: 'pointer',
-                                background: selected ? 'var(--bg-tertiary)' : 'transparent',
-                                borderLeft: selected ? '3px solid var(--accent)' : '3px solid transparent',
-                              }}
-                            >
-                              <td>
-                                <input
-                                  type="radio"
-                                  checked={!!selected}
-                                  onChange={() => handleContainerSelect(c)}
-                                  style={{ accentColor: 'var(--accent)' }}
-                                />
-                              </td>
-                              <td className="mono" style={{ fontWeight: 500, fontSize: '0.85rem' }}>{name}</td>
-                              <td className="mono" style={{ fontSize: '0.8rem' }}>{c.Image || c.image || '—'}</td>
-                              <td>
-                                <span style={{
-                                  display: 'inline-block',
-                                  padding: '2px 10px',
-                                  borderRadius: '12px',
-                                  fontSize: '0.7rem',
-                                  fontWeight: 600,
-                                  color: (c.State || c.state || '').toLowerCase() === 'running' ? 'var(--green)' : 'var(--red)',
-                                  background: (c.State || c.state || '').toLowerCase() === 'running' ? 'var(--green-dim)' : 'var(--red-dim)',
-                                }}>
-                                  {c.State || c.state || 'unknown'}
-                                </span>
-                              </td>
-                              <td>
-                                {isCompose ? (
-                                  <span style={{
-                                    display: 'inline-block',
-                                    padding: '1px 8px',
-                                    borderRadius: '10px',
-                                    background: 'var(--bg-tertiary)',
-                                    fontSize: '0.7rem',
-                                    color: 'var(--accent)',
-                                  }}>
-                                    📚 {isCompose}
-                                  </span>
-                                ) : <span className="text-secondary">—</span>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {selectedContainer && (
-                  <div style={{ marginTop: '12px', padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
-                    <div style={{ fontWeight: 600, marginBottom: '4px' }}>
-                      Selected: {(selectedContainer.Name || selectedContainer.name || '').replace(/^\//, '')}
-                    </div>
-                    <div className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      Image: {selectedContainer.Image || selectedContainer.image}
-                    </div>
-                    {(() => {
-                      const labels = selectedContainer.Labels || selectedContainer.labels || {};
-                      const project = labels['com.docker.compose.project'];
-                      if (project) {
-                        return (
-                          <div style={{ marginTop: '8px', padding: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', fontSize: '0.8rem' }}>
-                            <span style={{ color: 'var(--accent)' }}>📚</span> This container is part of Compose stack <strong>{project}</strong>.
-                            Consider migrating the entire stack.
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-                )}
               </div>
             )}
           </div>
         );
 
-      // ── STEP 2: Analyze ──
+      // ── STEP 2: Discovery ──
       case 2:
-        if (!analysis) return <div className="loading-center"><div className="spinner spinner-lg" /></div>;
-        const warnings = analysis.warnings || [];
-        const volumes = analysis.volumes || [];
-        const dbConns = analysis.dbConnections || [];
-        return (
-          <div style={{ display: 'grid', gap: '16px' }}>
-            {/* Container info */}
-            <div className="card">
-              <h3>Container</h3>
-              <table>
-                <tbody>
-                  <tr><td style={{ color: 'var(--text-secondary)', width: '120px' }}>Name</td><td className="mono" style={{ fontWeight: 500 }}>{analysis.containerName || '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Image</td><td className="mono">{analysis.image || '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>ID</td><td className="mono" style={{ fontSize: '0.8rem' }}>{analysis.containerId || '—'}</td></tr>
-                </tbody>
-              </table>
+        if (!plan) {
+          return (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <Spinner size="lg" />
+              <div style={{ marginTop: '16px', color: 'var(--text-secondary)' }}>
+                Analyzing migration...
+              </div>
             </div>
+          );
+        }
+        return renderDiscoveryResult();
 
-            {/* Warnings */}
-            {warnings.length > 0 && (
-              <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
-                <h3 style={{ color: 'var(--yellow)' }}>⚠ Warnings</h3>
-                {warnings.map((w, i) => (
-                  <div key={i} style={{ padding: '6px 0', fontSize: '0.85rem', color: 'var(--yellow)' }}>
-                    ⚠ {w}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Volumes */}
-            {volumes.length > 0 && (
-              <div className="card">
-                <h3>Volumes ({volumes.length})</h3>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Driver</th>
-                      <th>Category</th>
-                      <th>Size</th>
-                      <th>Shared</th>
-                      <th>Method</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {volumes.map(v => {
-                      const sizeGB = v.sizeBytes ? (v.sizeBytes / 1073741824).toFixed(1) : '—';
-                      return (
-                        <tr key={v.name}>
-                          <td className="mono" style={{ fontWeight: 500 }}>{v.name}</td>
-                          <td>{v.driver || '—'}</td>
-                          <td>{v.driverCategory || '—'}</td>
-                          <td className="mono">{sizeGB === '—' ? '—' : `${sizeGB} GB`}</td>
-                          <td>{v.shared ? '🔗 Yes' : 'No'}</td>
-                          <td><span className="mono" style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>{v.transferMethod || '—'}</span></td>
-                          <td>
-                            <button className="btn-sm" onClick={() => setInspectVolume(v.name)}>🔍 Inspect</button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* DB Connections */}
-            {dbConns.length > 0 && (
-              <div className="card">
-                <h3>Database Connections ({dbConns.length})</h3>
-                <ConnectionReview
-                  connections={dbConns.map(c => ({
-                    ...c,
-                    resolved: connectionResolutions[c.varName]?.resolved || false,
-                    resolution: connectionResolutions[c.varName]?.action,
-                  }))}
-                  onUpdate={(varName, action) => setConnectionResolutions(prev => ({
-                    ...prev, [varName]: { action, resolved: true }
-                  }))}
-                  blocked={false}
-                />
-              </div>
-            )}
-
-            {/* Size estimate */}
-            {analysis.estimatedSizeBytes > 0 && (
-              <div className="card" style={{ borderLeft: '3px solid var(--accent)' }}>
-                <h3>Estimated Transfer Size</h3>
-                <div className="mono" style={{ fontSize: '1.2rem', color: 'var(--accent)' }}>
-                  {(analysis.estimatedSizeBytes / 1073741824).toFixed(1)} GB
-                  {analysis.compressed ? ' (compressed estimate)' : ''}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-
-      // ── STEP 3: Strategy ──
+      // ── STEP 3: Review & Edit ──
       case 3:
         return (
-          <MigrationPlan
-            plan={analysis || {}}
-            volumes={analysis?.volumes || []}
-            onUpdate={handleStrategyUpdate}
+          <MigrationEditor
+            plan={plan}
+            onSave={handleEditorSave}
           />
         );
 
-      // ── STEP 4: Credentials Review ──
-      case 4: {
-        const envVars = analysis?.envVars || [];
-        const volOpts = (analysis?.volumes || []).filter(v => v.options && Object.keys(v.options).length > 0);
-        const hasComposeSecrets = analysis?.hasComposeSecrets;
+      // ── STEP 4: Pre-Flight ──
+      case 4:
         return (
-          <div style={{ display: 'grid', gap: '16px' }}>
-            <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
-              <h3>⚠ Security Notice</h3>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                All credentials are masked by default. Revealing them will be logged in the audit trail.
-                Remember to delete any temporary files created during migration.
-              </div>
-            </div>
-
-            {hasComposeSecrets && (
-              <div className="card" style={{ borderLeft: '3px solid var(--red)', background: 'var(--red-dim)' }}>
-                <div style={{ color: '#fff', fontSize: '0.85rem' }}>
-                  ⚠ This container uses Docker Compose secrets. Secrets will NOT be transferred.
-                  You must manually re-create secrets on the target host.
-                </div>
-              </div>
-            )}
-
-            {envVars.length > 0 && (
-              <div className="card">
-                <h3>Environment Variables ({envVars.length})</h3>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Variable</th>
-                      <th>Value</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {envVars.map((env, i) => {
-                      const isRevealed = credentialsRevealed[env.name];
-                      const isConfirming = credRevealConfirm === env.name;
-                      const looksSensitive = env.isSensitive;
-                      return (
-                        <tr key={i}>
-                          <td className="mono" style={{ fontWeight: 500 }}>{env.name}</td>
-                          <td className="mono" style={{ fontSize: '0.8rem' }}>
-                            {isRevealed ? (env.valueMasked || env.value || '') : (
-                              <span style={{ letterSpacing: '2px', color: looksSensitive ? 'var(--yellow)' : 'inherit' }}>
-                                ••••••••
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            <button
-                              className="btn-sm"
-                              onClick={() => handleRevealCredential(env.name)}
-                              style={isConfirming ? { background: 'var(--yellow-dim)', borderColor: 'var(--yellow)', color: '#fff' } : {}}
-                            >
-                              {isRevealed ? 'Hide' : isConfirming ? '⚠ Confirm' : '👁 Reveal'}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {volOpts.length > 0 && (
-              <div className="card">
-                <h3>Volume Options ({volOpts.length} volumes with options)</h3>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                  Volume options may contain sensitive data. Use the Volume Inspector for details.
-                </div>
-                {volOpts.map(v => (
-                  <div key={v.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
-                    <span className="mono">{v.name}</span>
-                    <button className="btn-sm" onClick={() => setInspectVolume(v.name)}>🔍 Inspect</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {envVars.length === 0 && !hasComposeSecrets && volOpts.length === 0 && (
-              <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>
-                No credentials to review
-              </div>
-            )}
-
-            {revealAudit.length > 0 && (
-              <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
-                <h3>🔍 Audit Log ({revealAudit.length} entries this session)</h3>
-                <div style={{ maxHeight: '120px', overflow: 'auto', fontSize: '0.75rem' }}>
-                  {revealAudit.map((entry, i) => (
-                    <div key={i} className="mono" style={{ padding: '2px 0', color: 'var(--text-secondary)' }}>
-                      [{entry.timestamp}] {entry.action} — {entry.detail?.variable || entry.detail}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <PreflightPanel
+            planId={plan?.planId}
+            onContinue={handlePreflightContinue}
+            onBack={handlePreflightBack}
+          />
         );
-      }
 
-      // ── STEP 5: Connection Fixes ──
+      // ── STEP 5: Execute & Verify ──
       case 5: {
-        const conns = (analysis?.dbConnections || []).map(c => ({
-          ...c,
-          resolved: connectionResolutions[c.varName]?.resolved || false,
-          resolution: connectionResolutions[c.varName]?.action,
-        }));
-        return (
-          <div>
-            <div className="card mb-16">
-              <h3>Connection Review</h3>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                Review database connections that may break after migration. All values are masked.
-              </div>
-            </div>
-            <ConnectionReview
-              connections={conns}
-              onUpdate={handleConnectionUpdate}
-              blocked={true}
-            />
-          </div>
-        );
-      }
-
-      // ── STEP 6: Target ──
-      case 6:
-        return (
-          <div style={{ display: 'grid', gap: '16px' }}>
-            <div className="card">
-              <h3>Target Endpoint</h3>
-              <select
-                value={targetEndpoint}
-                onChange={e => handleTargetSelect(e.target.value)}
-                style={{ width: '100%', marginTop: '8px' }}
-              >
-                <option value="">— Select target endpoint —</option>
-                <option value="local">Local</option>
-                {targetEndpoints.filter(ep => (ep.id || ep.Id) !== sourceEndpoint).map(ep => (
-                  <option key={ep.id || ep.Id} value={ep.id || ep.Id}>
-                    {ep.name || ep.Name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {targetInfo && (
-              <div className="card">
-                <h3>Target Info</h3>
-                <table>
-                  <tbody>
-                    <tr><td style={{ color: 'var(--text-secondary)', width: '160px' }}>Status</td><td>
-                      <span style={{ color: (targetInfo.status || '').toLowerCase() === 'connected' ? 'var(--green)' : 'var(--red)' }}>
-                        {targetInfo.status || 'unknown'}
-                      </span>
-                    </td></tr>
-                    <tr><td style={{ color: 'var(--text-secondary)' }}>Docker Version</td><td className="mono">{targetInfo.dockerVersion || '—'}</td></tr>
-                    <tr><td style={{ color: 'var(--text-secondary)' }}>Containers</td><td>{targetInfo.containerCount ?? '—'}</td></tr>
-                    {targetInfo.diskFreeBytes != null && (
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Disk Free</td><td className="mono">{(targetInfo.diskFreeBytes / 1073741824).toFixed(1)} GB</td></tr>
-                    )}
-                    {targetInfo.diskTotalBytes != null && (
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Disk Total</td><td className="mono">{(targetInfo.diskTotalBytes / 1073741824).toFixed(1)} GB</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="card">
-              <h3>Target Stack Name</h3>
-              <input
-                type="text"
-                value={targetStackName}
-                onChange={e => setTargetStackName(e.target.value)}
-                placeholder="Leave blank to use original name"
-                style={{ width: '100%', marginTop: '4px' }}
-              />
-            </div>
-          </div>
-        );
-
-      // ── STEP 7: Dry Run ──
-      case 7:
-        return (
-          <div style={{ display: 'grid', gap: '16px' }}>
-            {!dryRunResult ? (
-              <div style={{ textAlign: 'center', padding: '32px' }}>
-                <div className="text-secondary mb-16">Run a dry-run to preview all commands before execution</div>
-                <button className="btn-primary" onClick={handleDryRun} disabled={loading}>
-                  {loading ? 'Running...' : '🚀 Run Dry Run'}
-                </button>
-              </div>
-            ) : (
-              <>
-                {/* Warnings banner */}
-                {dryRunResult.warnings?.length > 0 && (
-                  <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
-                    <h3 style={{ color: 'var(--yellow)' }}>⚠ Warnings</h3>
-                    {dryRunResult.warnings.map((w, i) => (
-                      <div key={i} style={{ padding: '4px 0', fontSize: '0.85rem', color: 'var(--yellow)' }}>
-                        ⚠ {w}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Security banners */}
-                {transferMethod === 'rsync-over-ssh' && (
-                  <div className="card" style={{ borderLeft: '3px solid var(--green)' }}>
-                    <div style={{ color: 'var(--green)', fontSize: '0.85rem' }}>
-                      🔒 SSH transfer — all data encrypted in transit
-                    </div>
-                  </div>
-                )}
-
-                {analysis?.estimatedSizeBytes > 10 * 1073741824 && (
-                  <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
-                    <div style={{ color: 'var(--yellow)', fontSize: '0.85rem' }}>
-                      ⚠ Large volume ({((analysis?.estimatedSizeBytes || 0) / 1073741824).toFixed(1)} GB) —
-                      transfer may take significant time
-                    </div>
-                  </div>
-                )}
-
-                <div className="card" style={{ borderLeft: '3px solid var(--red)' }}>
-                  <div style={{ color: 'var(--red)', fontSize: '0.8rem' }}>
-                    ⚠ These commands are for REVIEW only. Actual execution requires admin confirmation.
-                    Credentials remain masked at all times.
-                  </div>
-                </div>
-
-                {/* Commands */}
-                <div className="card">
-                  <h3>Migration Commands</h3>
-                  {dryRunResult.commands?.map((cmd, i) => (
-                    <div key={i} style={{ marginBottom: '12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                          Step {i + 1}: {cmd.host === 'source' ? '🖥 Source' : cmd.host === 'target' ? '🖥 Target' : '⚙ System'}
-                        </span>
-                        <button
-                          className="btn-sm"
-                          onClick={() => {
-                            navigator.clipboard.writeText(cmd.command || cmd);
-                            toast('Copied to clipboard', 'success');
-                          }}
-                          style={{ fontSize: '0.65rem', padding: '2px 8px' }}
-                        >
-                          📋 Copy
-                        </button>
-                      </div>
-                      <pre style={{
-                        background: 'var(--bg-primary)',
-                        border: '1px solid var(--border)',
-                        borderRadius: '6px',
-                        padding: '12px',
-                        fontSize: '0.78rem',
-                        fontFamily: '"JetBrains Mono", monospace',
-                        color: 'var(--green)',
-                        overflow: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                      }}>
-                        <code>{typeof cmd === 'string' ? cmd : cmd.command}</code>
-                      </pre>
-                      {cmd.annotation && (
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                          {cmd.annotation}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Summary */}
-                <div className="card">
-                  <h3>Migration Summary</h3>
-                  <table>
-                    <tbody>
-                      <tr><td style={{ color: 'var(--text-secondary)', width: '180px' }}>Migration ID</td><td className="mono">{dryRunResult.migrationId || '—'}</td></tr>
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Source</td><td>{dryRunResult.sourceEndpoint || sourceEndpoint}</td></tr>
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Target</td><td>{dryRunResult.targetEndpoint || targetEndpoint}</td></tr>
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Container</td><td className="mono">{dryRunResult.containerName || '—'}</td></tr>
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Estimated Size</td><td className="mono">{dryRunResult.estimatedSizeBytes > 0 ? `${(dryRunResult.estimatedSizeBytes / 1073741824).toFixed(1)} GB` : '—'}</td></tr>
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Method</td><td className="mono">{transferMethod}</td></tr>
-                      <tr><td style={{ color: 'var(--text-secondary)' }}>Compression</td><td className="mono">{compression}</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
-        );
-
-      // ── STEP 8: Execute ──
-      case 8: {
-        const totalGroups = execCommands.length;
         const elapsed = execStartTime ? Math.floor((Date.now() - execStartTime) / 1000) : 0;
         const elapsedStr = elapsed > 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
         const hasResults = Object.keys(execResults).length > 0;
 
         return (
           <div style={{ display: 'grid', gap: '16px' }}>
-            {/* Progress */}
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h3 style={{ margin: 0 }}>
-                  {execPhase === 'pending' ? 'Ready to Execute' :
-                   execPhase === 'running' ? 'Executing...' :
-                   execPhase === 'completed_with_errors' ? 'Completed with Errors' :
-                   'Execution Complete'}
-                </h3>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{elapsedStr}</span>
-              </div>
-              {/* Progress bar */}
-              <div style={{
-                height: '6px',
-                background: 'var(--bg-tertiary)',
-                borderRadius: '3px',
-                overflow: 'hidden',
-                marginBottom: '16px',
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${execPhase === 'done' || execPhase === 'completed_with_errors' ? 100 : execPhase === 'running' ? 50 : 0}%`,
-                  background: execPhase === 'done' ? 'var(--green)' : execPhase === 'completed_with_errors' ? 'var(--yellow)' : 'var(--accent)',
-                  borderRadius: '3px',
-                  transition: 'width 0.5s ease',
-                }} />
-              </div>
-
-              {/* Results list after execution */}
-              {hasResults && (
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  {execCommands.map((cmd, i) => {
-                    const result = execResults[i];
-                    const isComplete = !!result;
-                    const failed = result && result.exit_code !== 0;
-
-                    return (
-                      <div key={i} style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        padding: '8px 12px',
-                        borderRadius: '6px',
-                        background: 'var(--bg-tertiary)',
-                        border: failed ? '1px solid var(--red)' : isComplete ? '1px solid var(--green-dim)' : '1px solid transparent',
-                      }}>
-                        <span style={{
-                          fontSize: '0.9rem',
-                          width: '20px',
-                          textAlign: 'center',
-                        }}>
-                          {isComplete && !failed ? <span style={{ color: 'var(--green)' }}>✓</span> :
-                           failed ? <span style={{ color: 'var(--red)' }}>✗</span> :
-                           <span style={{ color: 'var(--text-secondary)' }}>○</span>}
-                        </span>
-                        <code style={{
-                          flex: 1,
-                          fontSize: '0.75rem',
-                          color: failed ? 'var(--red)' : isComplete ? 'var(--green)' : 'var(--text-secondary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}>
-                          {typeof cmd === 'string' ? cmd : (cmd.command || cmd).substring(0, 80)}
-                        </code>
-                        {result?.exit_code !== undefined && (
-                          <span style={{
-                            fontSize: '0.7rem',
-                            color: result.exit_code === 0 ? 'var(--green)' : 'var(--red)',
-                            fontWeight: 600,
-                          }}>
-                            exit={result.exit_code}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+            {/* Execute */}
+            {execPhase === 'pending' && (
+              <div style={{ textAlign: 'center', padding: '32px' }}>
+                <div style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '16px' }}>
+                  Ready to Execute Migration
                 </div>
-              )}
-            </div>
+                <div style={{ color: 'var(--text-secondary)', marginBottom: '24px' }}>
+                  {plan?.migrationType === 'compose'
+                    ? 'This will stop services on source, transfer volumes, and deploy on target with rollback capability.'
+                    : 'This will transfer container volumes from source to target.'}
+                </div>
+                <button className="btn-primary" onClick={handleStartExecution} style={{ fontSize: '1rem', padding: '12px 32px' }}>
+                  ▶ Start Execution
+                </button>
+              </div>
+            )}
 
-            {/* Command output details */}
-            {hasResults && Object.entries(execResults).map(([idx, r]) => {
-              if (!r.stdout && !r.stderr) return null;
-              return (
-                <div key={idx} className="card">
-                  <h3 style={{ color: r.exit_code !== 0 ? 'var(--red)' : 'var(--green)' }}>
-                    Command {parseInt(idx) + 1} {r.exit_code === 0 ? '✓' : '✗'}
-                  </h3>
-                  <pre style={{
-                    background: 'var(--bg-primary)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '6px',
-                    padding: '12px',
-                    fontSize: '0.75rem',
-                    fontFamily: '"JetBrains Mono", monospace',
-                    color: 'var(--accent)',
-                    overflow: 'auto',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
-                    marginBottom: r.stderr ? '8px' : '0',
+            {execPhase === 'running' && !hasResults && (
+              <div style={{ textAlign: 'center', padding: '32px' }}>
+                <Spinner size="lg" />
+                <div style={{ marginTop: '16px', color: 'var(--text-secondary)' }}>
+                  Executing migration...
+                </div>
+              </div>
+            )}
+
+            {/* Results */}
+            {hasResults && (
+              <>
+                <div className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <h3 style={{ margin: 0 }}>
+                      {execPhase === 'done' ? '✓ Execution Complete' : '⚠ Completed with Errors'}
+                    </h3>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{elapsedStr}</span>
+                  </div>
+                  <div style={{
+                    height: '6px',
+                    background: 'var(--bg-tertiary)',
+                    borderRadius: '3px',
+                    overflow: 'hidden',
+                    marginBottom: '16px',
                   }}>
-                    <code>{r.command || ''}</code>
-                  </pre>
-                  {r.stdout && (
-                    <div style={{ marginBottom: r.stderr ? '6px' : '0' }}>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>stdout:</div>
+                    <div style={{
+                      height: '100%',
+                      width: '100%',
+                      background: execPhase === 'done' ? 'var(--green)' : 'var(--yellow)',
+                      borderRadius: '3px',
+                      transition: 'width 0.5s ease',
+                    }} />
+                  </div>
+
+                  <div style={{ display: 'grid', gap: '4px' }}>
+                    {Object.entries(execResults).map(([idx, r]) => {
+                      const failed = r.exit_code !== 0;
+                      return (
+                        <div key={idx} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          background: 'var(--bg-tertiary)',
+                          border: failed ? '1px solid var(--red)' : '1px solid var(--green-dim)',
+                        }}>
+                          <span style={{ fontSize: '0.9rem', width: '20px', textAlign: 'center' }}>
+                            {!failed ? <span style={{ color: 'var(--green)' }}>✓</span> :
+                             <span style={{ color: 'var(--red)' }}>✗</span>}
+                          </span>
+                          <code style={{
+                            flex: 1,
+                            fontSize: '0.75rem',
+                            color: failed ? 'var(--red)' : 'var(--green)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            {r.command ? r.command.substring(0, 80) : `Task ${parseInt(idx) + 1}`}
+                          </code>
+                          {r.exit_code !== undefined && (
+                            <span style={{
+                              fontSize: '0.7rem',
+                              color: r.exit_code === 0 ? 'var(--green)' : 'var(--red)',
+                              fontWeight: 600,
+                            }}>
+                              exit={r.exit_code}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Command details */}
+                {Object.entries(execResults).map(([idx, r]) => {
+                  if (!r.stdout && !r.stderr) return null;
+                  return (
+                    <div key={idx} className="card">
+                      <h3 style={{ color: r.exit_code !== 0 ? 'var(--red)' : 'var(--green)' }}>
+                        Command {parseInt(idx) + 1} {r.exit_code === 0 ? '✓' : '✗'}
+                      </h3>
                       <pre style={{
                         background: 'var(--bg-primary)',
                         border: '1px solid var(--border)',
                         borderRadius: '6px',
-                        padding: '8px',
-                        fontSize: '0.7rem',
+                        padding: '12px',
+                        fontSize: '0.75rem',
                         fontFamily: '"JetBrains Mono", monospace',
-                        color: 'var(--green)',
+                        color: 'var(--accent)',
                         overflow: 'auto',
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-all',
-                        maxHeight: '150px',
+                        marginBottom: r.stderr ? '8px' : '0',
                       }}>
-                        {r.stdout}
+                        <code>{r.command || ''}</code>
                       </pre>
+                      {r.stdout && (
+                        <div style={{ marginBottom: r.stderr ? '6px' : '0' }}>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>stdout:</div>
+                          <pre style={{
+                            background: 'var(--bg-primary)',
+                            border: '1px solid var(--border)',
+                            borderRadius: '6px',
+                            padding: '8px',
+                            fontSize: '0.7rem',
+                            fontFamily: '"JetBrains Mono", monospace',
+                            color: 'var(--green)',
+                            overflow: 'auto',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all',
+                            maxHeight: '150px',
+                          }}>
+                            {r.stdout}
+                          </pre>
+                        </div>
+                      )}
+                      {r.stderr && (
+                        <div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--yellow)', marginBottom: '4px' }}>stderr:</div>
+                          <pre style={{
+                            background: 'var(--bg-primary)',
+                            border: '1px solid var(--red-dim)',
+                            borderRadius: '6px',
+                            padding: '8px',
+                            fontSize: '0.7rem',
+                            fontFamily: '"JetBrains Mono", monospace',
+                            color: 'var(--red)',
+                            overflow: 'auto',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all',
+                            maxHeight: '150px',
+                          }}>
+                            {r.stderr}
+                          </pre>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {r.stderr && (
-                    <div>
-                      <div style={{ fontSize: '0.7rem', color: 'var(--yellow)', marginBottom: '4px' }}>stderr:</div>
-                      <pre style={{
-                        background: 'var(--bg-primary)',
-                        border: '1px solid var(--red-dim)',
-                        borderRadius: '6px',
-                        padding: '8px',
-                        fontSize: '0.7rem',
-                        fontFamily: '"JetBrains Mono", monospace',
-                        color: 'var(--red)',
-                        overflow: 'auto',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-all',
-                        maxHeight: '150px',
-                      }}>
-                        {r.stderr}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
 
-            {/* Loading spinner while executing */}
-            {execPhase === 'running' && !hasResults && (
-              <div style={{ textAlign: 'center', padding: '32px' }}>
-                <div className="spinner spinner-lg" style={{ margin: '0 auto 16px' }} />
-                <div style={{ color: 'var(--text-secondary)' }}>Executing migration commands via shell...</div>
-              </div>
+                {/* Post-migration actions */}
+                <div className="card">
+                  <h3>Post-Migration Actions</h3>
+                  <div className="btn-group">
+                    <button
+                      className="btn-danger"
+                      onClick={() => handlePostMigration('remove_source')}
+                    >
+                      🗑 Remove from Source
+                    </button>
+                    <button
+                      className="btn-warning"
+                      onClick={() => handlePostMigration('rollback')}
+                    >
+                      🔄 Rollback
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
-
-            {/* Action buttons */}
-            <div className="btn-group" style={{ justifyContent: 'center' }}>
-              {execPhase === 'pending' && (
-                <button className="btn-primary" onClick={handleStartExecution}>
-                  ▶ Start Execution
-                </button>
-              )}
-              {execPhase === 'done' && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ color: 'var(--green)', fontSize: '1.1rem', fontWeight: 600, marginBottom: '8px' }}>
-                    ✓ All commands completed
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    Advancing to verification...
-                  </div>
-                </div>
-              )}
-              {execPhase === 'completed_with_errors' && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ color: 'var(--yellow)', fontSize: '1.1rem', fontWeight: 600, marginBottom: '8px' }}>
-                    ⚠ Completed with errors — check results below
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    Some commands failed. Review errors before proceeding.
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         );
       }
 
-      // ── STEP 9: Verify ──
-      case 9:
-        const v = verification || {};
-        const hasVolumes = (v.volumes || []).length > 0;
-        const hasCommands = (v.commands || []).length > 0;
-        const hasDbConnections = (v.dbConnections || []).length > 0;
-        const brokenDbs = (v.dbConnections || []).filter(c => c.willBreak);
-        const hasWarnings = (v.warnings || []).length > 0;
-        const isSuccess = !hasWarnings && brokenDbs.length === 0;
-        const allSteps = [
-          { name: 'Container Export', status: hasCommands ? 'success' : 'skipped' },
-          { name: 'Volume Transfer', status: hasVolumes ? 'success' : 'skipped' },
-          { name: 'DB Connection Migration', status: !hasDbConnections ? 'skipped' : brokenDbs.length > 0 ? 'failed' : 'success' },
-          { name: 'Container Import', status: hasCommands ? 'success' : 'skipped' },
-          { name: 'Connectivity Test', status: 'pending' },
-        ];
-
-        return (
-          <div style={{ display: 'grid', gap: '16px' }}>
-            <div className="card" style={{ borderLeft: '3px solid ' + (isSuccess ? 'var(--green)' : 'var(--red)') }}>
-              <h3>Migration {isSuccess ? 'Successful ✓' : 'Completed with issues ⚠'}</h3>
-              <table>
-                <tbody>
-                  <tr><td style={{ color: 'var(--text-secondary)', width: '160px' }}>Duration</td><td>{'—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Bytes Transferred</td><td className="mono">{v.estimatedSizeBytes ? `${(v.estimatedSizeBytes / 1073741824).toFixed(2)} GB` : '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Container</td><td className="mono">{v.containerName || analysis?.containerName || '—'}</td></tr>
-                  <tr><td style={{ color: 'var(--text-secondary)' }}>Source → Target</td><td>{sourceEndpoint} → {targetEndpoint}</td></tr>
-                </tbody>
-              </table>
-            </div>
-
-            {/* Step-by-step results */}
-            <div className="card">
-              <h3>Step Results</h3>
-              <div style={{ display: 'grid', gap: '6px' }}>
-                {allSteps.map((s, i) => (
-                  <div key={i} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    background: 'var(--bg-tertiary)',
-                  }}>
-                    <span style={{
-                      color: s.status === 'success' ? 'var(--green)' :
-                             s.status === 'failed' ? 'var(--red)' :
-                             s.status === 'skipped' ? 'var(--yellow)' : 'var(--text-secondary)',
-                      fontWeight: 600,
-                    }}>
-                      {s.status === 'success' ? '✓' : s.status === 'failed' ? '✗' : s.status === 'skipped' ? '⊘' : '—'}
-                    </span>
-                    <span style={{ flex: 1 }}>{s.name}</span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      {s.status || 'pending'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Connectivity test note */}
-            {!isSuccess && (
-              <div className="card" style={{ borderLeft: `3px solid var(--yellow)` }}>
-                <h3>Connectivity Test</h3>
-                <div style={{ fontSize: '0.85rem', color: 'var(--yellow)' }}>
-                  ⚠ Manual connectivity verification required — check target endpoint
-                </div>
-              </div>
-            )}
-            {isSuccess && (
-              <div className="card" style={{ borderLeft: `3px solid var(--green)` }}>
-                <h3>Connectivity Test</h3>
-                <div style={{ fontSize: '0.85rem', color: 'var(--green)' }}>
-                  ✓ No issues detected — verify on target endpoint
-                </div>
-              </div>
-            )}
-
-            {/* Post-migration actions */}
-            <div className="card">
-              <h3>Post-Migration Actions</h3>
-              <div className="btn-group">
-                <button
-                  className="btn-danger"
-                  onClick={() => handlePostMigration('remove_source')}
-                >
-                  🗑 Remove from Source
-                </button>
-                <button
-                  className="btn-warning"
-                  onClick={() => handlePostMigration('rollback')}
-                >
-                  🔄 Restart on Source (Rollback)
-                </button>
-              </div>
-            </div>
-
-            {/* Audit log */}
-            {revealAudit.length > 0 && (
-              <div className="card" style={{ borderLeft: '3px solid var(--yellow)' }}>
-                <h3>🔍 Migration Audit Log</h3>
-                <div style={{ maxHeight: '150px', overflow: 'auto', fontSize: '0.75rem' }}>
-                  {revealAudit.map((entry, i) => (
-                    <div key={i} className="mono" style={{ padding: '2px 0', color: 'var(--text-secondary)' }}>
-                      [{entry.timestamp}] {entry.action} — {entry.detail?.variable || JSON.stringify(entry.detail)}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        );
+      default:
+        return null;
     }
   };
 
   return (
     <div>
       <div className="section-header">
-        <h1>🚚 Container Migration</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <h1>🚚 Migration</h1>
+          {migrationType && (
+            <span style={{
+              display: 'inline-block',
+              padding: '2px 10px',
+              borderRadius: '10px',
+              background: 'var(--accent-dim)',
+              color: 'var(--accent)',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+            }}>
+              {migrationType === 'compose' ? '📚 Compose' : '📦 Container'}
+            </span>
+          )}
+        </div>
         <div className="btn-group">
           <button className="btn-sm" onClick={() => navigate('dashboard')}>
             ← Dashboard
           </button>
         </div>
-      </div>
-
-      <div style={{
-        padding: '10px 16px', marginBottom: '16px',
-        background: 'var(--bg-secondary, #1e293b)',
-        border: '1px solid var(--accent, #3b82f6)',
-        borderRadius: '8px', fontSize: '0.85rem',
-        display: 'flex', alignItems: 'center', gap: '12px',
-      }}>
-        <span>📋</span>
-        <span style={{ flex: 1 }}>Migrating an entire stack? Try the new <strong>Compose Template Migration</strong> — diff compose files, pipe volumes directly (no SSH), with health-check and rollback.</span>
-        <button className="btn-sm btn-primary" onClick={() => navigate('migrationCompose')}>
-          Compose Migrate →
-        </button>
       </div>
 
       {error && (
@@ -1376,7 +1096,16 @@ export default function Migration({ navigate }) {
       <StepIndicator currentStep={step} completedSteps={completedSteps} />
 
       <div style={{ minHeight: '300px' }}>
-        {renderStepContent()}
+        {loading && step !== 4 ? (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Spinner size="lg" />
+            <div style={{ marginTop: '16px', color: 'var(--text-secondary)' }}>
+              {step === 2 ? 'Analyzing migration...' : 'Loading...'}
+            </div>
+          </div>
+        ) : (
+          renderStepContent()
+        )}
       </div>
 
       {/* Navigation footer */}
@@ -1398,13 +1127,16 @@ export default function Migration({ navigate }) {
           Step {step} of {TOTAL_STEPS}
         </div>
 
-        {step !== 8 && (
+        {step !== 4 && (
           <button
             className="btn-primary"
             onClick={handleNext}
             disabled={loading || !canGoNext()}
           >
-            {step === 9 ? '✅ Finish' : step === 1 ? 'Analyze →' : loading ? 'Loading...' : 'Next →'}
+            {step === TOTAL_STEPS ? '✅ Finish' :
+             step === 1 ? 'Analyze →' :
+             step === 3 ? 'Pre-Flight →' :
+             loading ? 'Loading...' : 'Next →'}
           </button>
         )}
       </div>

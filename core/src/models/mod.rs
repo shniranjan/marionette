@@ -7,6 +7,7 @@ pub mod stack;
 pub mod system;
 pub mod audit;
 pub mod migration;
+pub mod unified_migration;
 pub mod route;
 pub mod user;
 pub mod template;

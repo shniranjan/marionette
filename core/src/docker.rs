@@ -58,6 +58,7 @@ pub async fn build_initial_endpoints() -> (
         status: EndpointStatus::Disconnected,
         tags: vec!["default".to_string()],
         cert_path: None,
+        stacks_dir: None,
     };
 
     match create_client(&local_connection, None) {

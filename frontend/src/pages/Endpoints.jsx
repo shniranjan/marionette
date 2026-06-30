@@ -39,12 +39,14 @@ export default function Endpoints() {
   const [newConnection, setNewConnection] = useState('');
   const [newTags, setNewTags] = useState('');
   const [newCertPath, setNewCertPath] = useState('');
+  const [newStacksDir, setNewStacksDir] = useState('');
 
   // Edit form
   const [editName, setEditName] = useState('');
   const [editConnection, setEditConnection] = useState('');
   const [editTags, setEditTags] = useState('');
   const [editCertPath, setEditCertPath] = useState('');
+  const [editStacksDir, setEditStacksDir] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -76,12 +78,14 @@ export default function Endpoints() {
         connection: newConnection.trim(),
         tags: newTags.split(',').map(t => t.trim()).filter(Boolean),
         certPath: newCertPath.trim() || undefined,
+        stacksDir: newStacksDir.trim() || undefined,
       });
       setShowAdd(false);
       setNewName('');
       setNewConnection('');
       setNewTags('');
       setNewCertPath('');
+      setNewStacksDir('');
       toast('Endpoint added', 'success');
       load();
     } catch (err) {
@@ -101,6 +105,7 @@ export default function Endpoints() {
         connection: editConnection.trim() || undefined,
         tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
         certPath: editCertPath.trim() || null,
+        stacksDir: editStacksDir.trim() || null,
       });
       setShowEdit(null);
       toast('Endpoint updated', 'success');
@@ -164,6 +169,7 @@ export default function Endpoints() {
     setEditConnection(ep.connection || ep.Connection || '');
     setEditTags((ep.tags || ep.Tags || []).join(', '));
     setEditCertPath(ep.certPath || ep.CertPath || '');
+    setEditStacksDir(ep.stacksDir || ep.StacksDir || '');
   };
 
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
@@ -354,6 +360,19 @@ export default function Endpoints() {
                 Directory containing ca.pem, cert.pem, key.pem for https:// endpoints
               </div>
             </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>Compose Stacks Directory (optional)</label>
+              <input
+                type="text"
+                value={newStacksDir}
+                onChange={e => setNewStacksDir(e.target.value)}
+                placeholder="/home/user/docker-compose"
+                style={{ width: '100%' }}
+              />
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Host path where compose files are stored (for migration). Leave empty if not using compose migration.
+              </div>
+            </div>
           </div>
         </Modal>
       )}
@@ -421,6 +440,19 @@ export default function Endpoints() {
               />
               <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
                 Leave blank to use DOCKER_CERT_PATH env var
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: 500 }}>Compose Stacks Directory</label>
+              <input
+                type="text"
+                value={editStacksDir}
+                onChange={e => setEditStacksDir(e.target.value)}
+                placeholder="/home/user/docker-compose"
+                style={{ width: '100%' }}
+              />
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Host path where compose files are stored (for migration). Leave empty to clear.
               </div>
             </div>
           </div>

@@ -220,6 +220,11 @@ async fn main() {
         .route("/migration/compose/prepare", post(migration::prepare_compose_target))
         .route("/migration/compose/switchover", post(migration::switchover_compose))
         .route("/migration/compose/progress", get(ws::progress::switchover_progress_ws))
+        // Unified Migration (Wave 1 / ramupel)
+        .route("/api/migration/unified/analyze", post(migration::analyze_unified))
+        .route("/api/migration/unified/plan/{id}", get(migration::get_unified_plan))
+        .route("/api/migration/unified/plan/{id}/edit", post(migration::edit_unified_plan))
+        .route("/api/migration/unified/plan/{id}/preflight", post(migration::preflight_unified))
         .layer(cors)
         .with_state(state);
 

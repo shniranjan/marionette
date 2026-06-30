@@ -12,6 +12,8 @@ pub struct DockerEndpoint {
     pub tags: Vec<String>,
     #[serde(default)]
     pub cert_path: Option<String>,
+    #[serde(default)]
+    pub stacks_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

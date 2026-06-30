@@ -97,20 +97,46 @@ impl ComposeRunner {
     }
 }
 
-/// Read a compose file from a remote Docker endpoint via bollard.
-/// Creates an ephemeral alpine container with the stacks directory bind-mounted,
-/// runs `cat` to read the file, captures stdout from container logs.
+/// Read a compose file from a Docker endpoint via bollard.
+///
+/// **Local endpoint** (`unix://`): reads directly from the filesystem with `std::fs::read_to_string`.
+/// This avoids the unnecessary alpine container overhead and the bind-mount path bug
+/// (where the container-internal path like `/stacks` is not a valid host path for the bind).
+///
+/// **Remote endpoint**: creates an ephemeral alpine container with the stacks directory
+/// bind-mounted, runs `cat` to read the file, and captures stdout from container logs.
+/// Uses `host_stacks_dir` (the real host path) for the bind mount source.
 pub async fn read_compose_remote(
     docker: &bollard::Docker,
     stacks_dir: &str,
+    host_stacks_dir: Option<&str>,
     stack_name: &str,
+    is_local: bool,
 ) -> Result<String, String> {
+    // Fast path: local endpoint — read directly from filesystem
+    if is_local {
+        let base = stacks_dir.trim_end_matches('/');
+        for fname in &["docker-compose.yml", "compose.yml"] {
+            let path = format!("{}/{}/{}", base, stack_name, fname);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return Ok(content);
+            }
+        }
+        return Err(format!(
+            "Compose file not found for stack '{}' in {} — checked docker-compose.yml and compose.yml",
+            stack_name, stacks_dir
+        ));
+    }
+
+    // Remote endpoint: create alpine container with bind mount
     use bollard::container::{
         Config, CreateContainerOptions, LogOutput, LogsOptions, RemoveContainerOptions,
         StartContainerOptions,
     };
     use bollard::models::HostConfig;
     use futures::StreamExt;
+
+    let bind_source = host_stacks_dir.unwrap_or(stacks_dir);
 
     // Try docker-compose.yml first, then compose.yml
     let file_paths = [
@@ -135,7 +161,7 @@ pub async fn read_compose_remote(
                     image: Some("alpine:latest"),
                     cmd: Some(vec!["cat", file_path.as_str()]),
                     host_config: Some(HostConfig {
-                        binds: Some(vec![format!("{}:{}:ro", stacks_dir, stacks_dir)]),
+                        binds: Some(vec![format!("{}:{}:ro", bind_source, stacks_dir)]),
                         auto_remove: Some(true),
                         ..Default::default()
                     }),

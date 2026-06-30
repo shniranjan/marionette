@@ -112,7 +112,7 @@ export default function Stacks() {
     if (!stackName.trim()) return;
     setCreating(true);
     try {
-      await api.post('/api/stacks', { name: stackName.trim(), compose: yml });
+      await api.post('/api/stacks', { name: stackName.trim(), content: yml });
       setShowCreate(false);
       setStackName('');
       setYml(DEFAULT_YML);

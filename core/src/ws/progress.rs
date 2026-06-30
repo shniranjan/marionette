@@ -21,24 +21,6 @@ use crate::switchover::ProgressMessage;
 static PROGRESS_BROADCAST: std::sync::OnceLock<tokio::sync::Mutex<Option<broadcast::Sender<ProgressMessage>>>> =
     std::sync::OnceLock::new();
 
-/// Initialize (or reinitialize) the progress broadcast channel.
-/// Returns a new sender and the receiver side.
-pub fn init_progress_channel() -> (
-    broadcast::Sender<ProgressMessage>,
-    broadcast::Receiver<ProgressMessage>,
-) {
-    let _mutex = PROGRESS_BROADCAST.get_or_init(|| tokio::sync::Mutex::new(None));
-    // We cannot block in async context, so we use try_lock + create new.
-    // This is called from the route handler before spawning the switchover task.
-    let (tx, _) = broadcast::channel::<ProgressMessage>(64);
-    // We'll store the sender for new subscribers and return a receiver for the WS handler.
-    // Actually, we need a different approach: the route handler creates a channel,
-    // passes tx to switchover, and rx to the WS handler.
-    // But this is a single WS endpoint that multiple clients might connect to.
-    // Let's use a simpler approach: the route handler creates the channel.
-    (tx, broadcast::channel::<ProgressMessage>(64).1)
-}
-
 /// GET /migration/compose/progress → WebSocket upgrade
 ///
 /// Streams JSON progress messages during an active switchover.

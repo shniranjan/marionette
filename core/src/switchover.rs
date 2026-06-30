@@ -23,37 +23,6 @@ use tokio::sync::mpsc;
 
 use crate::transfer::{self, VolumeTransfer};
 
-// ── State Machine ──────────────────────────────────────────────────
-
-/// The current phase of the switchover state machine.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub enum SwitchoverState {
-    Init,
-    SourceStopped,
-    VolumesTransferred,
-    TargetDeployed,
-    HealthChecking,
-    Complete,
-    Failed(String),
-    RollingBack,
-}
-
-impl std::fmt::Display for SwitchoverState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Init => write!(f, "Init"),
-            Self::SourceStopped => write!(f, "SourceStopped"),
-            Self::VolumesTransferred => write!(f, "VolumesTransferred"),
-            Self::TargetDeployed => write!(f, "TargetDeployed"),
-            Self::HealthChecking => write!(f, "HealthChecking"),
-            Self::Complete => write!(f, "Complete"),
-            Self::Failed(e) => write!(f, "Failed({})", e),
-            Self::RollingBack => write!(f, "RollingBack"),
-        }
-    }
-}
-
 // ── Request / Response ─────────────────────────────────────────────
 
 /// Incoming switchover request.
@@ -132,6 +101,10 @@ pub async fn run_switchover(
     request: &SwitchoverRequest,
     source_stacks_dir: &str,
     target_stacks_dir: &str,
+    source_host_stacks_dir: &str,
+    _target_host_stacks_dir: &str,
+    source_is_local: bool,
+    _target_is_local: bool,
     progress_tx: Option<mpsc::UnboundedSender<ProgressMessage>>,
 ) -> SwitchoverResult {
     let mut steps: Vec<SwitchoverStep> = Vec::new();
@@ -213,7 +186,7 @@ pub async fn run_switchover(
             // Attempt rollback
             send("rollback", "started", "Rolling back: restarting source containers...");
             let rb_t0 = Instant::now();
-            match restart_source_containers(source, &request.stack_name, source_stacks_dir).await {
+            match restart_source_containers(source, &request.stack_name, source_stacks_dir, source_host_stacks_dir, source_is_local).await {
                 Ok(_) => {
                     rollback_performed = true;
                     let rb_dur = rb_t0.elapsed().as_millis() as u64;
@@ -268,7 +241,7 @@ pub async fn run_switchover(
             // Attempt rollback
             send("rollback", "started", "Rolling back: restarting source containers...");
             let rb_t0 = Instant::now();
-            match restart_source_containers(source, &request.stack_name, source_stacks_dir).await {
+            match restart_source_containers(source, &request.stack_name, source_stacks_dir, source_host_stacks_dir, source_is_local).await {
                 Ok(_) => {
                     rollback_performed = true;
                     let rb_dur = rb_t0.elapsed().as_millis() as u64;
@@ -315,7 +288,7 @@ pub async fn run_switchover(
                 let rb_t0 = Instant::now();
                 // Also stop the failed target containers
                 let _ = stop_target_containers(target, &request.stack_name).await;
-                match restart_source_containers(source, &request.stack_name, source_stacks_dir).await {
+                match restart_source_containers(source, &request.stack_name, source_stacks_dir, source_host_stacks_dir, source_is_local).await {
                     Ok(_) => {
                         rollback_performed = true;
                         let rb_dur = rb_t0.elapsed().as_millis() as u64;
@@ -386,9 +359,17 @@ async fn restart_source_containers(
     docker: &Docker,
     stack_name: &str,
     stacks_dir: &str,
+    host_stacks_dir: &str,
+    is_local: bool,
 ) -> Result<(), String> {
     // Read the compose file from source stacks dir and redeploy
-    let compose_yaml = crate::compose::read_compose_remote(docker, stacks_dir, stack_name).await?;
+    let compose_yaml = crate::compose::read_compose_remote(
+        docker,
+        stacks_dir,
+        if host_stacks_dir.is_empty() { None } else { Some(host_stacks_dir) },
+        stack_name,
+        is_local,
+    ).await?;
     deploy_compose_target(docker, &compose_yaml, stack_name, stacks_dir).await?;
     Ok(())
 }

@@ -7,6 +7,7 @@
 use serde_yaml::Value;
 
 /// Structured diff between two compose files.
+#[deprecated(note = "Use unified_migration::MigrationPlan")]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComposeDiff {
@@ -20,6 +21,7 @@ pub struct ComposeDiff {
     pub warnings: Vec<String>,
 }
 
+#[deprecated(note = "Use unified_migration::UnifiedVolume")]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VolumeChange {
@@ -49,6 +51,7 @@ pub struct ImageChange {
     pub major_version_change: bool,
 }
 
+#[deprecated(note = "Use unified_migration::UnifiedEnvVar")]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvChange {
@@ -76,6 +79,7 @@ pub struct ArchitectureInfo {
     pub warning: Option<String>,
 }
 
+#[deprecated(note = "Use unified_migration::UnifiedDatabase")]
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseService {
@@ -84,11 +88,15 @@ pub struct DatabaseService {
     pub image: String,
     pub version: Option<String>,
     pub has_replication: bool,
+    pub username: Option<String>,
+    pub password_masked: Option<String>,
+    pub port: Option<String>,
+    pub database_name: Option<String>,
     pub pre_transfer_commands: Vec<String>,
     pub post_transfer_commands: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum DatabaseType {
     PostgreSQL,
@@ -121,15 +129,122 @@ pub struct DatabaseVersion {
 }
 
 impl DatabaseVersion {
-    /// True if this version is at least the given major.minor.
-    pub fn at_least(&self, major: u32, minor: u32) -> bool {
-        self.major > major || (self.major == major && self.minor.unwrap_or(0) >= minor)
-    }
-
     /// True if this version is at least the given major version.
     pub fn at_least_major(&self, major: u32) -> bool {
         self.major >= major
     }
+}
+
+/// Extracted database credentials and connection parameters from compose env.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DatabaseCredentials {
+    username: Option<String>,
+    password: Option<String>,
+    port: Option<String>,
+    database_name: Option<String>,
+}
+
+/// Detect database credentials from compose environment variables.
+fn detect_db_credentials(
+    db_type: &DatabaseType,
+    env: &std::collections::HashMap<String, String>,
+    ports_yaml: Option<&Value>,
+) -> DatabaseCredentials {
+    let mut creds = DatabaseCredentials::default();
+
+    // Check ports section for standard database port mappings
+    let port_from_ports = detect_port_from_ports_section(ports_yaml);
+    if port_from_ports.is_some() {
+        creds.port = port_from_ports;
+    }
+
+    match db_type {
+        DatabaseType::PostgreSQL => {
+            creds.username = env
+                .get("POSTGRES_USER")
+                .or_else(|| env.get("PGUSER"))
+                .cloned();
+            creds.password = env
+                .get("POSTGRES_PASSWORD")
+                .or_else(|| env.get("PGPASSWORD"))
+                .cloned();
+            creds.database_name = env.get("POSTGRES_DB").cloned();
+            // Check PGPORT env var (override if present)
+            if let Some(pgport) = env.get("PGPORT") {
+                creds.port = Some(pgport.clone());
+            }
+        }
+        DatabaseType::MySQL => {
+            creds.username = env
+                .get("MYSQL_USER")
+                .cloned();
+            creds.password = env
+                .get("MYSQL_ROOT_PASSWORD")
+                .or_else(|| env.get("MYSQL_PASSWORD"))
+                .cloned();
+            creds.database_name = env.get("MYSQL_DATABASE").cloned();
+            // Check MYSQL_TCP_PORT env var (override if present)
+            if let Some(mysql_port) = env.get("MYSQL_TCP_PORT") {
+                creds.port = Some(mysql_port.clone());
+            }
+        }
+        DatabaseType::MongoDB => {
+            creds.username = env
+                .get("MONGO_INITDB_ROOT_USERNAME")
+                .or_else(|| env.get("MONGO_USER"))
+                .cloned();
+            creds.password = env
+                .get("MONGO_INITDB_ROOT_PASSWORD")
+                .or_else(|| env.get("MONGO_PASSWORD"))
+                .cloned();
+            creds.database_name = env.get("MONGO_INITDB_DATABASE").cloned();
+            if let Some(mongo_port) = env.get("MONGO_PORT") {
+                creds.port = Some(mongo_port.clone());
+            }
+        }
+        DatabaseType::Redis => {
+            creds.password = env.get("REDIS_PASSWORD").cloned();
+            if let Some(redis_port) = env.get("REDIS_PORT") {
+                creds.port = Some(redis_port.clone());
+            }
+        }
+        DatabaseType::Other(_) => {}
+    }
+
+    creds
+}
+
+/// Detect exposed port from compose ports section (e.g., "5432:5432" → container port 5432).
+fn detect_port_from_ports_section(ports: Option<&Value>) -> Option<String> {
+    let seq = ports?.as_sequence()?;
+    for item in seq {
+        let s = item.as_str()?;
+        // Format: "HOST:CONTAINER" or "CONTAINER"
+        let container_port = if let Some((_host, container)) = s.split_once(':') {
+            container
+        } else {
+            s
+        };
+        // Check for standard database ports
+        match container_port {
+            "5432" | "3306" | "27017" | "6379" | "16379" => return Some(container_port.to_string()),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Mask a password for display (show first char + asterisks).
+fn mask_password(password: &str) -> String {
+    if password.is_empty() {
+        return String::new();
+    }
+    let mut masked = String::with_capacity(password.len());
+    masked.push(password.chars().next().unwrap_or('*'));
+    for _ in 1..password.len() {
+        masked.push('*');
+    }
+    masked
 }
 
 /// Generate a complete diff between two compose YAMLs.
@@ -306,21 +421,30 @@ pub fn diff_compose(
                 if let Some(image) = src_image {
                     if let Some(db_type) = detect_database_type(image) {
                         let parsed_version = parse_image_version(image);
+                        let env_map = env_to_map(details.get("environment"));
+                        let creds = detect_db_credentials(&db_type, &env_map, details.get("ports"));
+                        let password_masked = creds.password.as_ref().map(|p| mask_password(p));
                         diff.database_services.push(DatabaseService {
                             service_name: name_str.to_string(),
                             db_type: db_type.clone(),
                             image: image.to_string(),
                             version: img_version(image),
                             has_replication: false,
+                            username: creds.username.clone(),
+                            password_masked: password_masked,
+                            port: creds.port.clone(),
+                            database_name: creds.database_name.clone(),
                             pre_transfer_commands: generate_db_pre_commands(
                                 &db_type,
                                 name_str,
                                 parsed_version.as_ref(),
+                                &creds,
                             ),
                             post_transfer_commands: generate_db_post_commands(
                                 &db_type,
                                 name_str,
                                 parsed_version.as_ref(),
+                                &creds,
                             ),
                         });
                     }
@@ -597,10 +721,14 @@ pub fn parse_image_version(image: &str) -> Option<DatabaseVersion> {
 ///
 /// Produces real, actionable docker exec commands for dump + lock.
 /// Version-aware: PostgreSQL ≥ 9 uses custom format, Redis ≥ 6 uses --rdb flag.
+/// Credential-aware: injects username/password from compose environment.
+/// Port-aware: uses custom port if detected.
+/// Database-targeting: dumps specific DB if POSTGRES_DB/MYSQL_DATABASE/etc. is set.
 pub fn generate_db_pre_commands(
     db_type: &DatabaseType,
     service_name: &str,
     version: Option<&DatabaseVersion>,
+    creds: &DatabaseCredentials,
 ) -> Vec<String> {
     let container = service_name;
     match db_type {
@@ -608,21 +736,48 @@ pub fn generate_db_pre_commands(
             let use_custom_fmt = version.map_or(true, |v| v.at_least_major(9));
             let fmt_flag = if use_custom_fmt { "Fc" } else { "Fp" };
             let dump_ext = if use_custom_fmt { "custom" } else { "sql" };
-            vec![
+            let user = creds.username.as_deref().unwrap_or("postgres");
+            let db = creds.database_name.as_deref().unwrap_or("postgres");
+            let password_prefix = creds
+                .password
+                .as_ref()
+                .map(|p| format!("PGPASSWORD={} ", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" -p {}", p))
+                .unwrap_or_default();
+
+            let mut cmds = vec![
                 format!("# === PostgreSQL pre-transfer for '{}' ===", service_name),
                 format!(
-                    "docker exec {} psql -U postgres -c \"ALTER DATABASE postgres SET default_transaction_read_only = on;\"",
-                    container
+                    "docker exec {} {}psql -U {}{} -c \"ALTER DATABASE {} SET default_transaction_read_only = on;\"",
+                    container, password_prefix, user, port_flag, db
                 ),
                 format!(
-                    "docker exec {} pg_dump -{} -f /tmp/dump.{} -U postgres -d postgres",
-                    container, fmt_flag, dump_ext
+                    "docker exec {} {}pg_dump -{} -f /tmp/dump.{} -U {}{} -d {}",
+                    container, password_prefix, fmt_flag, dump_ext, user, port_flag, db
                 ),
                 format!(
                     "docker cp {}:/tmp/dump.{} ./dump.{}",
                     container, dump_ext, dump_ext
                 ),
-            ]
+            ];
+
+            // Add pg_dumpall for globals/roles (PG >= 9)
+            if version.map_or(true, |v| v.at_least_major(9)) {
+                cmds.push(format!(
+                    "docker exec {} {}pg_dumpall -U {}{} -g -f /tmp/globals.sql",
+                    container, password_prefix, user, port_flag
+                ));
+                cmds.push(format!(
+                    "docker cp {}:/tmp/globals.sql ./globals.sql",
+                    container
+                ));
+            }
+
+            cmds
         }
         DatabaseType::MySQL => {
             let is_mariadb = version
@@ -633,29 +788,69 @@ pub fn generate_db_pre_commands(
             } else {
                 "mysqldump"
             };
+            let user = creds.username.as_deref().unwrap_or("root");
+            let password_flag = creds
+                .password
+                .as_ref()
+                .map(|p| format!("-p{} ", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" -P {}", p))
+                .unwrap_or_default();
+            let db_target = creds
+                .database_name
+                .as_deref()
+                .map(|db| format!(" {}", db))
+                .unwrap_or_else(|| " --all-databases".to_string());
+
             vec![
                 format!("# === MySQL/MariaDB pre-transfer for '{}' ===", service_name),
                 format!(
-                    "docker exec {} mysql -u root -e \"FLUSH TABLES WITH READ LOCK;\"",
-                    container
+                    "docker exec {} mysql -u {}{}{} -e \"FLUSH TABLES WITH READ LOCK;\"",
+                    container, user, password_flag, port_flag
                 ),
                 format!(
-                    "docker exec {} sh -c \"{} --single-transaction --quick --routines --triggers --all-databases -u root > /tmp/dump.sql\"",
-                    container, dump_tool
+                    "docker exec {} sh -c \"{} --single-transaction --quick --routines --triggers{} -u {}{}{} > /tmp/dump.sql\"",
+                    container, dump_tool, db_target, user, password_flag, port_flag
                 ),
                 format!("docker cp {}:/tmp/dump.sql ./dump.sql", container),
             ]
         }
         DatabaseType::MongoDB => {
+            let user_flag = creds
+                .username
+                .as_ref()
+                .map(|u| format!(" -u {}", u))
+                .unwrap_or_default();
+            let password_flag = creds
+                .password
+                .as_ref()
+                .map(|p| format!(" -p {}", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" --port {}", p))
+                .unwrap_or_default();
+            let db_flag = creds
+                .database_name
+                .as_ref()
+                .map(|db| format!(" {}", db))
+                .unwrap_or_default();
+
             vec![
                 format!("# === MongoDB pre-transfer for '{}' ===", service_name),
                 format!(
-                    "docker exec {} mongosh --eval \"db.fsyncLock()\"",
-                    container
+                    "docker exec {} mongosh{} --eval \"db = db.getSiblingDB('{}'); db.fsyncLock()\"{}",
+                    container, user_flag,
+                    creds.database_name.as_deref().unwrap_or("admin"),
+                    password_flag
                 ),
                 format!(
-                    "docker exec {} mongodump --archive=/tmp/dump.archive",
-                    container
+                    "docker exec {} mongodump --archive=/tmp/dump.archive{}{}{}{}",
+                    container, user_flag, password_flag, port_flag, db_flag
                 ),
                 format!(
                     "docker cp {}:/tmp/dump.archive ./dump.archive",
@@ -665,13 +860,27 @@ pub fn generate_db_pre_commands(
         }
         DatabaseType::Redis => {
             let use_rdb_flag = version.map_or(true, |v| v.at_least_major(6));
+            let auth_flag = creds
+                .password
+                .as_ref()
+                .map(|p| format!(" -a {}", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" -p {}", p))
+                .unwrap_or_default();
+
             if use_rdb_flag {
                 vec![
                     format!("# === Redis pre-transfer for '{}' (>= 6) ===", service_name),
-                    format!("docker exec {} redis-cli BGSAVE", container),
                     format!(
-                        "docker exec {} redis-cli --rdb /tmp/dump.rdb",
-                        container
+                        "docker exec {} redis-cli{}{} BGSAVE",
+                        container, auth_flag, port_flag
+                    ),
+                    format!(
+                        "docker exec {} redis-cli{}{} --rdb /tmp/dump.rdb",
+                        container, auth_flag, port_flag
                     ),
                     format!(
                         "docker cp {}:/tmp/dump.rdb ./dump.rdb",
@@ -681,10 +890,13 @@ pub fn generate_db_pre_commands(
             } else {
                 vec![
                     format!("# === Redis pre-transfer for '{}' (< 6) ===", service_name),
-                    format!("docker exec {} redis-cli BGSAVE", container),
                     format!(
-                        "# Wait for BGSAVE to complete: docker exec {} redis-cli LASTSAVE",
-                        container
+                        "docker exec {} redis-cli{}{} BGSAVE",
+                        container, auth_flag, port_flag
+                    ),
+                    format!(
+                        "# Wait for BGSAVE to complete: docker exec {} redis-cli{}{} LASTSAVE",
+                        container, auth_flag, port_flag
                     ),
                     format!(
                         "docker cp {}:/data/dump.rdb ./dump.rdb",
@@ -706,16 +918,32 @@ pub fn generate_db_pre_commands(
 ///
 /// Produces real, actionable docker exec commands for restore + unlock.
 /// Version-aware: PostgreSQL ≥ 9 uses pg_restore for custom format.
+/// Credential-aware: injects username/password from compose environment.
+/// Port-aware: uses custom port if detected.
 pub fn generate_db_post_commands(
     db_type: &DatabaseType,
     service_name: &str,
     version: Option<&DatabaseVersion>,
+    creds: &DatabaseCredentials,
 ) -> Vec<String> {
     let container = service_name;
     match db_type {
         DatabaseType::PostgreSQL => {
             let use_custom_fmt = version.map_or(true, |v| v.at_least_major(9));
-            if use_custom_fmt {
+            let user = creds.username.as_deref().unwrap_or("postgres");
+            let db = creds.database_name.as_deref().unwrap_or("postgres");
+            let password_prefix = creds
+                .password
+                .as_ref()
+                .map(|p| format!("PGPASSWORD={} ", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" -p {}", p))
+                .unwrap_or_default();
+
+            let mut cmds = if use_custom_fmt {
                 vec![
                     format!("# === PostgreSQL post-transfer for '{}' ===", service_name),
                     format!(
@@ -723,12 +951,8 @@ pub fn generate_db_post_commands(
                         container
                     ),
                     format!(
-                        "docker exec {} pg_restore -d postgres /tmp/dump.custom",
-                        container
-                    ),
-                    format!(
-                        "docker exec {} psql -U postgres -c \"ALTER DATABASE postgres SET default_transaction_read_only = off;\"",
-                        container
+                        "docker exec {} {}pg_restore -U {}{} -d {} /tmp/dump.custom",
+                        container, password_prefix, user, port_flag, db
                     ),
                 ]
             } else {
@@ -736,31 +960,74 @@ pub fn generate_db_post_commands(
                     format!("# === PostgreSQL post-transfer for '{}' ===", service_name),
                     format!("docker cp ./dump.sql {}:/tmp/dump.sql", container),
                     format!(
-                        "docker exec {} psql -U postgres -d postgres -f /tmp/dump.sql",
-                        container
-                    ),
-                    format!(
-                        "docker exec {} psql -U postgres -c \"ALTER DATABASE postgres SET default_transaction_read_only = off;\"",
-                        container
+                        "docker exec {} {}psql -U {}{} -d {} -f /tmp/dump.sql",
+                        container, password_prefix, user, port_flag, db
                     ),
                 ]
+            };
+
+            // Restore globals/roles if pg_dumpall was used (PG >= 9)
+            if version.map_or(true, |v| v.at_least_major(9)) {
+                cmds.push(format!(
+                    "docker cp ./globals.sql {}:/tmp/globals.sql",
+                    container
+                ));
+                cmds.push(format!(
+                    "docker exec {} {}psql -U {}{} -d {} -f /tmp/globals.sql",
+                    container, password_prefix, user, port_flag, db
+                ));
             }
+
+            cmds.push(format!(
+                "docker exec {} {}psql -U {}{} -c \"ALTER DATABASE {} SET default_transaction_read_only = off;\"",
+                container, password_prefix, user, port_flag, db
+            ));
+
+            cmds
         }
         DatabaseType::MySQL => {
+            let user = creds.username.as_deref().unwrap_or("root");
+            let password_flag = creds
+                .password
+                .as_ref()
+                .map(|p| format!("-p{} ", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" -P {}", p))
+                .unwrap_or_default();
+
             vec![
                 format!("# === MySQL/MariaDB post-transfer for '{}' ===", service_name),
                 format!("docker cp ./dump.sql {}:/tmp/dump.sql", container),
                 format!(
-                    "docker exec {} sh -c \"mysql -u root < /tmp/dump.sql\"",
-                    container
+                    "docker exec {} sh -c \"mysql -u {}{}{} < /tmp/dump.sql\"",
+                    container, user, password_flag, port_flag
                 ),
                 format!(
-                    "docker exec {} mysql -u root -e \"UNLOCK TABLES;\"",
-                    container
+                    "docker exec {} mysql -u {}{}{} -e \"UNLOCK TABLES;\"",
+                    container, user, password_flag, port_flag
                 ),
             ]
         }
         DatabaseType::MongoDB => {
+            let user_flag = creds
+                .username
+                .as_ref()
+                .map(|u| format!(" -u {}", u))
+                .unwrap_or_default();
+            let password_flag = creds
+                .password
+                .as_ref()
+                .map(|p| format!(" -p {}", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" --port {}", p))
+                .unwrap_or_default();
+
             vec![
                 format!("# === MongoDB post-transfer for '{}' ===", service_name),
                 format!(
@@ -768,22 +1035,35 @@ pub fn generate_db_post_commands(
                     container
                 ),
                 format!(
-                    "docker exec {} mongorestore --archive=/tmp/dump.archive",
-                    container
+                    "docker exec {} mongorestore --archive=/tmp/dump.archive{}{}{}",
+                    container, user_flag, password_flag, port_flag
                 ),
                 format!(
-                    "docker exec {} mongosh --eval \"db.fsyncUnlock()\"",
-                    container
+                    "docker exec {} mongosh{} --eval \"db = db.getSiblingDB('{}'); db.fsyncUnlock()\"{}",
+                    container, user_flag,
+                    creds.database_name.as_deref().unwrap_or("admin"),
+                    password_flag
                 ),
             ]
         }
         DatabaseType::Redis => {
+            let auth_flag = creds
+                .password
+                .as_ref()
+                .map(|p| format!(" -a {}", p))
+                .unwrap_or_default();
+            let port_flag = creds
+                .port
+                .as_ref()
+                .map(|p| format!(" -p {}", p))
+                .unwrap_or_default();
+
             vec![
                 format!("# === Redis post-transfer for '{}' ===", service_name),
                 format!("docker cp ./dump.rdb {}:/tmp/dump.rdb", container),
                 format!(
-                    "# Restore: copy dump.rdb into Redis data dir, then restart or SHUTDOWN NOSAVE: docker exec {} redis-cli SHUTDOWN NOSAVE",
-                    container
+                    "# Restore: copy dump.rdb into Redis data dir, then restart or SHUTDOWN NOSAVE: docker exec {} redis-cli{}{} SHUTDOWN NOSAVE",
+                    container, auth_flag, port_flag
                 ),
             ]
         }
@@ -911,12 +1191,16 @@ mod tests {
     #[test]
     fn test_postgres_pre_commands_custom_format() {
         let v = parse_image_version("postgres:15.4").unwrap();
-        let cmds = generate_db_pre_commands(&DatabaseType::PostgreSQL, "mydb", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::PostgreSQL, "mydb", Some(&v), &creds);
         // Should use custom format (PG >= 9)
         assert!(cmds.iter().any(|c| c.contains("pg_dump -Fc")));
         assert!(cmds.iter().any(|c| c.contains("dump.custom")));
         assert!(cmds.iter().any(|c| c.contains("read_only")));
         assert!(!cmds.iter().any(|c| c.contains("pg_dump -Fp")));
+        // PG >= 9 should include pg_dumpall for globals
+        assert!(cmds.iter().any(|c| c.contains("pg_dumpall")));
+        assert!(cmds.iter().any(|c| c.contains("globals.sql")));
     }
 
     #[test]
@@ -928,17 +1212,23 @@ mod tests {
             patch: None,
             variant: None,
         };
-        let cmds = generate_db_pre_commands(&DatabaseType::PostgreSQL, "olddb", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::PostgreSQL, "olddb", Some(&v), &creds);
         assert!(cmds.iter().any(|c| c.contains("pg_dump -Fp")));
         assert!(cmds.iter().any(|c| c.contains("dump.sql")));
+        // PG < 9 should NOT have pg_dumpall
+        assert!(!cmds.iter().any(|c| c.contains("pg_dumpall")));
     }
 
     #[test]
     fn test_postgres_post_commands_restore() {
         let v = parse_image_version("postgres:15").unwrap();
-        let cmds = generate_db_post_commands(&DatabaseType::PostgreSQL, "mydb", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_post_commands(&DatabaseType::PostgreSQL, "mydb", Some(&v), &creds);
         assert!(cmds.iter().any(|c| c.contains("pg_restore")));
         assert!(cmds.iter().any(|c| c.contains("read_only = off")));
+        // PG >= 9 should include globals.sql restore
+        assert!(cmds.iter().any(|c| c.contains("globals.sql")));
     }
 
     // ── E3: MySQL pre/post command tests ───────────────────────
@@ -946,12 +1236,15 @@ mod tests {
     #[test]
     fn test_mysql_pre_commands() {
         let v = parse_image_version("mysql:8.0").unwrap();
-        let cmds = generate_db_pre_commands(&DatabaseType::MySQL, "mysqlsvc", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::MySQL, "mysqlsvc", Some(&v), &creds);
         assert!(cmds.iter().any(|c| c.contains("FLUSH TABLES WITH READ LOCK")));
         assert!(cmds.iter().any(|c| c.contains("mysqldump")));
         assert!(cmds.iter().any(|c| c.contains("--single-transaction")));
         assert!(cmds.iter().any(|c| c.contains("--routines")));
         assert!(cmds.iter().any(|c| c.contains("--triggers")));
+        // Default: no creds → expects --all-databases
+        assert!(cmds.iter().any(|c| c.contains("--all-databases")));
     }
 
     #[test]
@@ -963,14 +1256,16 @@ mod tests {
             patch: None,
             variant: Some("mariadb".to_string()),
         };
-        let cmds = generate_db_pre_commands(&DatabaseType::MySQL, "mariadb", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::MySQL, "mariadb", Some(&v), &creds);
         assert!(cmds.iter().any(|c| c.contains("mariadb-dump")));
         assert!(!cmds.iter().any(|c| c.contains("mysqldump")));
     }
 
     #[test]
     fn test_mysql_post_commands() {
-        let cmds = generate_db_post_commands(&DatabaseType::MySQL, "mysqlsvc", None);
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_post_commands(&DatabaseType::MySQL, "mysqlsvc", None, &creds);
         assert!(cmds.iter().any(|c| c.contains("mysql -u root < /tmp/dump.sql")));
         assert!(cmds.iter().any(|c| c.contains("UNLOCK TABLES")));
     }
@@ -979,14 +1274,16 @@ mod tests {
 
     #[test]
     fn test_mongodb_pre_commands() {
-        let cmds = generate_db_pre_commands(&DatabaseType::MongoDB, "mongo", None);
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::MongoDB, "mongo", None, &creds);
         assert!(cmds.iter().any(|c| c.contains("db.fsyncLock()")));
         assert!(cmds.iter().any(|c| c.contains("mongodump --archive=/tmp/dump.archive")));
     }
 
     #[test]
     fn test_mongodb_post_commands() {
-        let cmds = generate_db_post_commands(&DatabaseType::MongoDB, "mongo", None);
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_post_commands(&DatabaseType::MongoDB, "mongo", None, &creds);
         assert!(cmds.iter().any(|c| c.contains("mongorestore --archive=/tmp/dump.archive")));
         assert!(cmds.iter().any(|c| c.contains("db.fsyncUnlock()")));
     }
@@ -994,7 +1291,8 @@ mod tests {
     #[test]
     fn test_redis_pre_commands_rdb_flag() {
         let v = parse_image_version("redis:7-alpine").unwrap();
-        let cmds = generate_db_pre_commands(&DatabaseType::Redis, "cache", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::Redis, "cache", Some(&v), &creds);
         assert!(cmds.iter().any(|c| c.contains("redis-cli --rdb")));
         assert!(cmds.iter().any(|c| c.contains("BGSAVE")));
     }
@@ -1007,7 +1305,8 @@ mod tests {
             patch: None,
             variant: None,
         };
-        let cmds = generate_db_pre_commands(&DatabaseType::Redis, "oldcache", Some(&v));
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_pre_commands(&DatabaseType::Redis, "oldcache", Some(&v), &creds);
         assert!(cmds.iter().any(|c| c.contains("BGSAVE")));
         assert!(cmds.iter().any(|c| c.contains("/data/dump.rdb")));
         assert!(!cmds.iter().any(|c| c.contains("--rdb")));
@@ -1015,26 +1314,13 @@ mod tests {
 
     #[test]
     fn test_redis_post_commands() {
-        let cmds = generate_db_post_commands(&DatabaseType::Redis, "cache", None);
+        let creds = DatabaseCredentials::default();
+        let cmds = generate_db_post_commands(&DatabaseType::Redis, "cache", None, &creds);
         assert!(cmds.iter().any(|c| c.contains("dump.rdb")));
         assert!(cmds.iter().any(|c| c.contains("SHUTDOWN NOSAVE")));
     }
 
     // ── DatabaseVersion methods ───────────────────────────────
-
-    #[test]
-    fn test_db_version_at_least() {
-        let v = DatabaseVersion {
-            major: 9,
-            minor: Some(6),
-            patch: None,
-            variant: None,
-        };
-        assert!(v.at_least(9, 0));
-        assert!(v.at_least(9, 5));
-        assert!(!v.at_least(9, 7));
-        assert!(!v.at_least(10, 0));
-    }
 
     #[test]
     fn test_db_version_at_least_major() {
@@ -1062,10 +1348,12 @@ mod tests {
         // Pre commands should use custom format (PG >= 9)
         assert!(db.pre_transfer_commands.iter().any(|c| c.contains("pg_dump -Fc")));
         // Post commands should use pg_restore
-        assert!(db
-            .post_transfer_commands
-            .iter()
-            .any(|c| c.contains("pg_restore")));
+        assert!(db.post_transfer_commands.iter().any(|c| c.contains("pg_restore")));
+        // New fields should be None (no env set)
+        assert_eq!(db.username, None);
+        assert_eq!(db.password_masked, None);
+        assert_eq!(db.port, None);
+        assert_eq!(db.database_name, None);
     }
 
     #[test]
@@ -1076,9 +1364,190 @@ mod tests {
         let db = &diff.database_services[0];
         assert_eq!(db.db_type, DatabaseType::MongoDB);
         assert!(db.pre_transfer_commands.iter().any(|c| c.contains("mongodump")));
-        assert!(db
-            .post_transfer_commands
-            .iter()
-            .any(|c| c.contains("mongorestore")));
+        assert!(db.post_transfer_commands.iter().any(|c| c.contains("mongorestore")));
+    }
+
+    // ── Phase E: Credential detection tests ───────────────────
+
+    #[test]
+    fn test_detect_postgres_with_env_credentials() {
+        let src = "services:\n  db:\n    image: postgres:15\n    environment:\n      POSTGRES_USER: myuser\n      POSTGRES_PASSWORD: secret123\n      POSTGRES_DB: myapp\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(db.username.as_deref(), Some("myuser"));
+        assert!(db.password_masked.as_ref().unwrap().starts_with('s'));
+        assert!(db.password_masked.as_ref().unwrap().contains('*'));
+        assert_eq!(db.database_name.as_deref(), Some("myapp"));
+        // Commands should reference the custom user and database
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-U myuser")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-d myapp")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("PGPASSWORD=secret123")));
+    }
+
+    #[test]
+    fn test_detect_mysql_with_env_credentials() {
+        let src = "services:\n  db:\n    image: mysql:8.0\n    environment:\n      MYSQL_USER: dbuser\n      MYSQL_ROOT_PASSWORD: rootpass\n      MYSQL_DATABASE: mydb\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.username.as_deref(), Some("dbuser"));
+        assert!(db.password_masked.is_some());
+        assert_eq!(db.database_name.as_deref(), Some("mydb"));
+        // Commands should use -u dbuser and NOT --all-databases (specific DB targeting)
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-u dbuser")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-prootpass")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains(" mydb ")));
+        assert!(!db.pre_transfer_commands.iter().any(|c| c.contains("--all-databases")));
+    }
+
+    #[test]
+    fn test_mysql_custom_port_detection() {
+        let src = "services:\n  db:\n    image: mysql:8.0\n    environment:\n      MYSQL_TCP_PORT: '3307'\n    ports:\n      - '3307:3306'\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        // MYSQL_TCP_PORT env var should override port from ports section
+        assert_eq!(db.port.as_deref(), Some("3307"));
+        // Commands should include -P 3307
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-P 3307")));
+    }
+
+    #[test]
+    fn test_postgres_pgport_env_detection() {
+        let src = "services:\n  db:\n    image: postgres:15\n    environment:\n      PGPORT: '5433'\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.port.as_deref(), Some("5433"));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-p 5433")));
+    }
+
+    #[test]
+    fn test_mongodb_auth_commands() {
+        let src = "services:\n  mongo:\n    image: mongo:7\n    environment:\n      MONGO_INITDB_ROOT_USERNAME: admin\n      MONGO_INITDB_ROOT_PASSWORD: mpass\n      MONGO_INITDB_DATABASE: appdb\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.username.as_deref(), Some("admin"));
+        assert!(db.password_masked.is_some());
+        assert_eq!(db.database_name.as_deref(), Some("appdb"));
+        // Commands should contain auth flags
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-u admin")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-p mpass")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("appdb")));
+    }
+
+    #[test]
+    fn test_redis_auth_commands() {
+        let src = "services:\n  cache:\n    image: redis:7\n    environment:\n      REDIS_PASSWORD: redissecret\n      REDIS_PORT: '6380'\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.port.as_deref(), Some("6380"));
+        assert!(db.password_masked.is_some());
+        // Commands should have -a flag for auth and -p for port
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-a redissecret")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("-p 6380")));
+    }
+
+    #[test]
+    fn test_database_service_new_fields_serialization() {
+        let ds = DatabaseService {
+            service_name: "testdb".to_string(),
+            db_type: DatabaseType::PostgreSQL,
+            image: "postgres:15".to_string(),
+            version: Some("15".to_string()),
+            has_replication: false,
+            username: Some("myuser".to_string()),
+            password_masked: Some("s*********".to_string()),
+            port: Some("5432".to_string()),
+            database_name: Some("mydb".to_string()),
+            pre_transfer_commands: vec!["cmd1".to_string()],
+            post_transfer_commands: vec!["cmd2".to_string()],
+        };
+        let json = serde_json::to_string(&ds).unwrap();
+        // Verify camelCase JSON keys
+        assert!(json.contains("\"serviceName\""));
+        assert!(json.contains("\"dbType\""));
+        assert!(json.contains("\"hasReplication\""));
+        assert!(json.contains("\"username\""));
+        assert!(json.contains("\"passwordMasked\""));
+        assert!(json.contains("\"port\""));
+        assert!(json.contains("\"databaseName\""));
+        assert!(json.contains("\"preTransferCommands\""));
+        assert!(json.contains("\"postTransferCommands\""));
+        // Verify values
+        assert!(json.contains("\"myuser\""));
+        assert!(json.contains("\"s*********\""));
+        assert!(json.contains("\"5432\""));
+        assert!(json.contains("\"mydb\""));
+    }
+
+    #[test]
+    fn test_port_detection_from_ports_section() {
+        // Test that ports section is detected without env vars
+        let src = "services:\n  db:\n    image: postgres:15\n    ports:\n      - '5432:5432'\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.port.as_deref(), Some("5432"));
+    }
+
+    #[test]
+    fn test_pg_dumpall_includes_globals_dump() {
+        let src = "services:\n  db:\n    image: postgres:12\n    environment:\n      POSTGRES_PASSWORD: pgpass\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        // Should have pg_dumpall -g for globals
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("pg_dumpall") && c.contains("-g")));
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("globals.sql")));
+        // Post commands should restore globals
+        assert!(db.post_transfer_commands.iter().any(|c| c.contains("globals.sql")));
+    }
+
+    #[test]
+    fn test_mask_password_function() {
+        assert_eq!(mask_password("secret123"), "s********");
+        assert_eq!(mask_password("a"), "a");
+        assert_eq!(mask_password(""), "");
+    }
+
+    #[test]
+    fn test_detect_db_credentials_empty() {
+        let env = std::collections::HashMap::new();
+        let creds = detect_db_credentials(&DatabaseType::PostgreSQL, &env, None);
+        assert_eq!(creds.username, None);
+        assert_eq!(creds.password, None);
+        assert_eq!(creds.port, None);
+        assert_eq!(creds.database_name, None);
+    }
+
+    #[test]
+    fn test_detect_db_credentials_postgres_full() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("POSTGRES_USER".to_string(), "pguser".to_string());
+        env.insert("POSTGRES_PASSWORD".to_string(), "pgpass".to_string());
+        env.insert("POSTGRES_DB".to_string(), "pgdb".to_string());
+        env.insert("PGPORT".to_string(), "5433".to_string());
+        let creds = detect_db_credentials(&DatabaseType::PostgreSQL, &env, None);
+        assert_eq!(creds.username.as_deref(), Some("pguser"));
+        assert_eq!(creds.password.as_deref(), Some("pgpass"));
+        assert_eq!(creds.database_name.as_deref(), Some("pgdb"));
+        assert_eq!(creds.port.as_deref(), Some("5433"));
+    }
+
+    #[test]
+    fn test_detect_db_credentials_mysql_full() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("MYSQL_USER".to_string(), "myuser".to_string());
+        env.insert("MYSQL_ROOT_PASSWORD".to_string(), "rootpw".to_string());
+        env.insert("MYSQL_DATABASE".to_string(), "mydb".to_string());
+        let creds = detect_db_credentials(&DatabaseType::MySQL, &env, None);
+        assert_eq!(creds.username.as_deref(), Some("myuser"));
+        assert_eq!(creds.password.as_deref(), Some("rootpw"));
+        assert_eq!(creds.database_name.as_deref(), Some("mydb"));
     }
 }

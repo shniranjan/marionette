@@ -451,7 +451,6 @@ async fn build_migration_plan(
         env_vars,
         has_compose_secrets,
         start_on_target: post_options.start_on_target,
-        verify_connectivity: post_options.verify_connectivity,
         compression: compression.to_string(),
         post_options: Some(post_options.clone()),
         volume_overrides: if volume_overrides.is_empty() { None } else { Some(volume_overrides.clone()) },
@@ -460,6 +459,7 @@ async fn build_migration_plan(
 
 // ── POST /migration/analyze ───────────────────────────────────────
 
+#[allow(deprecated)]
 pub async fn analyze_migration(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<AnalyzeRequest>,
@@ -498,6 +498,7 @@ pub async fn analyze_migration(
 
 // ── POST /migration/plan ──────────────────────────────────────────
 
+#[allow(deprecated)]
 pub async fn plan_migration(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<PlanRequest>,
@@ -543,6 +544,7 @@ pub async fn plan_migration(
 
 // ── POST /migration/dry-run ───────────────────────────────────────
 
+#[allow(deprecated)]
 pub async fn dry_run_migration(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<PlanRequest>,
@@ -588,6 +590,7 @@ pub async fn dry_run_migration(
 
 // ── GET /migration/:id ────────────────────────────────────────────
 
+#[allow(deprecated)]
 pub async fn get_migration(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
@@ -615,6 +618,7 @@ pub async fn get_migration(
 
 // ── POST /migration/{id}/rollback ──────────────────────────────────
 
+#[allow(deprecated)]
 pub async fn rollback_migration(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
@@ -691,6 +695,7 @@ fn coalesce_commands(raw: &[String]) -> Vec<String> {
     out
 }
 
+#[allow(deprecated)]
 pub async fn execute_migration(
     State(state): State<Arc<crate::AppState>>,
     Path(id): Path<String>,
@@ -1112,6 +1117,7 @@ fn build_s3_commands(
 use crate::transfer::{self, TransferRequest};
 
 /// Execute volume transfers via bollard direct pipe (no SSH).
+#[allow(deprecated)]
 pub async fn transfer_volumes(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<TransferRequest>,
@@ -1205,6 +1211,7 @@ fn default_true() -> bool {
 
 /// Analyze compose files on source and target, returning a structured diff.
 /// POST /migration/compose/analyze
+#[allow(deprecated)]
 pub async fn analyze_compose(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<ComposeAnalyzeRequest>,
@@ -1213,10 +1220,20 @@ pub async fn analyze_compose(
     let source = helpers::resolve_client(&state, Some(&body.source_endpoint)).await?;
     let target = helpers::resolve_client(&state, Some(&body.target_endpoint)).await?;
 
+    // Determine per-endpoint is_local and host_stacks_dir
+    let src_ep = state.registry.get(&body.source_endpoint).await;
+    let tgt_ep = state.registry.get(&body.target_endpoint).await;
+
+    let src_is_local = src_ep.as_ref().map(|e| e.connection.starts_with("unix://")).unwrap_or(false);
+    let tgt_is_local = tgt_ep.as_ref().map(|e| e.connection.starts_with("unix://")).unwrap_or(false);
+
+    let src_host_stacks_dir = src_ep.as_ref().and_then(|e| e.stacks_dir.as_deref());
+    let tgt_host_stacks_dir = tgt_ep.as_ref().and_then(|e| e.stacks_dir.as_deref());
+
     // Read compose files from both endpoints
     let (src_yaml, tgt_yaml) = tokio::join!(
-        crate::compose::read_compose_remote(&source, &body.source_stacks_dir, &body.stack_name),
-        crate::compose::read_compose_remote(&target, &body.target_stacks_dir, &body.stack_name),
+        crate::compose::read_compose_remote(&source, &body.source_stacks_dir, src_host_stacks_dir, &body.stack_name, src_is_local),
+        crate::compose::read_compose_remote(&target, &body.target_stacks_dir, tgt_host_stacks_dir, &body.stack_name, tgt_is_local),
     );
 
     let source_compose = match src_yaml {
@@ -1264,17 +1281,20 @@ pub async fn analyze_compose(
         .await;
 
     Ok(Json(serde_json::json!({
-        "stack_name": body.stack_name,
-        "source_endpoint": body.source_endpoint,
-        "target_endpoint": body.target_endpoint,
-        "source_architecture": src_arch_str,
-        "target_architecture": tgt_arch_str,
+        "stackName": body.stack_name,
+        "sourceEndpoint": body.source_endpoint,
+        "targetEndpoint": body.target_endpoint,
+        "sourceArchitecture": src_arch_str,
+        "targetArchitecture": tgt_arch_str,
+        "sourceComposeYaml": source_compose,
+        "targetComposeYaml": target_compose,
         "diff": diff,
     })))
 }
 
 /// Prepare target for compose deployment — create volumes, pull images.
 /// POST /migration/compose/prepare
+#[allow(deprecated)]
 pub async fn prepare_compose_target(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<ComposePrepareRequest>,
@@ -1385,6 +1405,7 @@ pub async fn prepare_compose_target(
 /// Execute a live compose switchover from source to target endpoint.
 /// Spawns the switchover state machine in a background task and returns
 /// immediately. Progress is streamed via WebSocket at /migration/compose/progress.
+#[allow(deprecated)]
 pub async fn switchover_compose(
     State(state): State<Arc<crate::AppState>>,
     Json(body): Json<crate::switchover::SwitchoverRequest>,
@@ -1415,6 +1436,16 @@ pub async fn switchover_compose(
     let body_bg = body.clone();
     let stacks_dir = state.stacks_dir.to_string_lossy().to_string();
 
+    // Determine per-endpoint host stacks dir and local-ness for switchover
+    let src_ep = state.registry.get(&body.source_endpoint).await;
+    let tgt_ep = state.registry.get(&body.target_endpoint).await;
+
+    let src_is_local = src_ep.as_ref().map(|e| e.connection.starts_with("unix://")).unwrap_or(false);
+    let tgt_is_local = tgt_ep.as_ref().map(|e| e.connection.starts_with("unix://")).unwrap_or(false);
+
+    let src_host_stacks_dir = src_ep.as_ref().and_then(|e| e.stacks_dir.clone()).unwrap_or_default();
+    let tgt_host_stacks_dir = tgt_ep.as_ref().and_then(|e| e.stacks_dir.clone()).unwrap_or_default();
+
     // Audit
     state
         .audit_log
@@ -1438,6 +1469,10 @@ pub async fn switchover_compose(
             &body_bg,
             &stacks_dir,
             &stacks_dir,
+            &src_host_stacks_dir,
+            &tgt_host_stacks_dir,
+            src_is_local,
+            tgt_is_local,
             Some(mpsc_tx),
         )
         .await;
@@ -1456,4 +1491,607 @@ pub async fn switchover_compose(
         "target_endpoint": body.target_endpoint,
         "stack_name": body.stack_name,
     })))
+}
+
+// ── Unified Migration Handlers (Wave 1 / ramupel) ──────────────────
+// These are the new unified API endpoints that work with the single
+// MigrationPlan type from models::unified_migration. Old endpoints
+// remain in place and are untouched.
+
+use crate::models::unified_migration::{
+    MigrationPlan as UnifiedPlan, MigrationType, PlanEditRequest,
+    PreflightResults, CheckResult, UnifiedAnalyzeRequest,
+    UnifiedDatabase, UnifiedEnvVar, UnifiedService, UnifiedVolume,
+    ImageOverride, ServiceAction,
+};
+use crate::compose_diff::{ComposeDiff, DatabaseType};
+
+// ── POST /api/migration/unified/analyze ─────────────────────────────
+
+/// Unified analyze endpoint. Accepts migrationType ("container" or "compose"),
+/// runs the appropriate discovery logic, converts to a unified MigrationPlan,
+/// stores it in the database, and returns it.
+pub async fn analyze_unified(
+    State(state): State<Arc<crate::AppState>>,
+    Json(body): Json<UnifiedAnalyzeRequest>,
+) -> ApiResult<UnifiedPlan> {
+    let db = state.registry.db();
+    let plan_id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    match body.migration_type {
+        MigrationType::Container => {
+            // Reuse existing container analysis, but convert old MigrationPlan → new unified plan
+            let container_id = body
+                .container_name
+                .as_deref()
+                .ok_or_else(|| error(StatusCode::BAD_REQUEST, "containerName required for container migration"))?
+                .to_string();
+
+            let old_plan = build_migration_plan(
+                &state,
+                &body.source_endpoint,
+                Some(&body.target_endpoint),
+                &container_id,
+                "scp",
+                false,
+                "none",
+                &PostOptions::default(),
+                &HashMap::new(),
+            )
+            .await?;
+
+            // Convert old MigrationPlan → unified MigrationPlan
+            let unified = convert_container_plan(&plan_id, &old_plan, &now);
+            db.save_plan(&unified);
+
+            // Audit
+            state.audit_log.record(
+                "migration.unified.analyze.container",
+                &body.source_endpoint,
+                &container_id,
+                &format!("unified plan {} created (container)", plan_id),
+                "gateway",
+            ).await;
+
+            Ok(Json(unified))
+        }
+        MigrationType::Compose => {
+            // Reuse existing compose analysis, convert ComposeDiff → unified plan
+            let stack_name = body
+                .stack_name
+                .as_deref()
+                .ok_or_else(|| error(StatusCode::BAD_REQUEST, "stackName required for compose migration"))?
+                .to_string();
+
+            let source = helpers::resolve_client(&state, Some(&body.source_endpoint)).await?;
+            let target = helpers::resolve_client(&state, Some(&body.target_endpoint)).await?;
+
+            let src_ep = state.registry.get(&body.source_endpoint).await;
+            let tgt_ep = state.registry.get(&body.target_endpoint).await;
+
+            let src_is_local = src_ep.as_ref().map(|e| e.connection.starts_with("unix://")).unwrap_or(false);
+            let tgt_is_local = tgt_ep.as_ref().map(|e| e.connection.starts_with("unix://")).unwrap_or(false);
+
+            let src_host_stacks_dir = src_ep.as_ref().and_then(|e| e.stacks_dir.as_deref());
+            let tgt_host_stacks_dir = tgt_ep.as_ref().and_then(|e| e.stacks_dir.as_deref());
+
+            // Default stacks dir
+            let stacks_dir = "/stacks".to_string();
+
+            let (src_yaml, tgt_yaml) = tokio::join!(
+                crate::compose::read_compose_remote(&source, &stacks_dir, src_host_stacks_dir, &stack_name, src_is_local),
+                crate::compose::read_compose_remote(&target, &stacks_dir, tgt_host_stacks_dir, &stack_name, tgt_is_local),
+            );
+
+            let source_compose = src_yaml.map_err(|e| error(StatusCode::NOT_FOUND, &e))?;
+            let target_compose = tgt_yaml.map_err(|e| error(StatusCode::NOT_FOUND, &e))?;
+
+            let (src_arch, tgt_arch) = tokio::join!(
+                crate::docker::detect_architecture(&source),
+                crate::docker::detect_architecture(&target),
+            );
+
+            let src_arch_str = src_arch.ok();
+            let tgt_arch_str = tgt_arch.ok();
+
+            let diff = crate::compose_diff::diff_compose(
+                &source_compose,
+                &target_compose,
+                src_arch_str.as_deref(),
+                tgt_arch_str.as_deref(),
+            )
+            .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+            let unified = convert_compose_diff_to_plan(
+                &plan_id,
+                &diff,
+                &body.source_endpoint,
+                &body.target_endpoint,
+                &stack_name,
+                src_arch_str.clone(),
+                tgt_arch_str.clone(),
+                &now,
+            );
+
+            db.save_plan(&unified);
+
+            // Audit
+            state.audit_log.record(
+                "migration.unified.analyze.compose",
+                &body.source_endpoint,
+                &stack_name,
+                &format!("unified plan {} created (compose)", plan_id),
+                "gateway",
+            ).await;
+
+            Ok(Json(unified))
+        }
+    }
+}
+
+// ── POST /api/migration/unified/plan/:id/edit ────────────────────────
+
+/// Merge partial edits into a stored MigrationPlan and save back.
+pub async fn edit_unified_plan(
+    State(state): State<Arc<crate::AppState>>,
+    Path(plan_id): Path<String>,
+    Json(body): Json<PlanEditRequest>,
+) -> ApiResult<UnifiedPlan> {
+    let db = state.registry.db();
+
+    let mut plan = db
+        .load_plan(&plan_id)
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Migration plan '{}' not found", plan_id)))?;
+
+    // Merge fields
+    if let Some(v) = body.target_stack_name {
+        plan.target_stack_name = Some(v);
+    }
+    if let Some(v) = body.volumes {
+        plan.volumes = v;
+    }
+    if let Some(v) = body.databases {
+        plan.databases = v;
+    }
+    if let Some(v) = body.env_vars {
+        plan.env_vars = v;
+    }
+    if let Some(v) = body.services {
+        plan.services = v;
+    }
+    if let Some(v) = body.images {
+        plan.images = v;
+    }
+
+    db.save_plan(&plan);
+
+    // Audit
+    state.audit_log.record(
+        "migration.unified.edit",
+        &plan.source_endpoint,
+        &plan_id,
+        "unified plan edited",
+        "gateway",
+    ).await;
+
+    Ok(Json(plan))
+}
+
+// ── POST /api/migration/unified/plan/:id/preflight ───────────────────
+
+/// Run pre-flight checks on a stored MigrationPlan.
+pub async fn preflight_unified(
+    State(state): State<Arc<crate::AppState>>,
+    Path(plan_id): Path<String>,
+) -> ApiResult<PreflightResults> {
+    let db = state.registry.db();
+
+    let plan = db
+        .load_plan(&plan_id)
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Migration plan '{}' not found", plan_id)))?;
+
+    let mut checks: Vec<CheckResult> = Vec::new();
+
+    // 1. Architecture check
+    match (&plan.source_architecture, &plan.target_architecture) {
+        (Some(src), Some(tgt)) if src != tgt => {
+            checks.push(CheckResult {
+                name: "architecture".to_string(),
+                status: "warn".to_string(),
+                message: format!("Architecture mismatch: source is {}, target is {}", src, tgt),
+                suggestion: Some("Images must be multi-arch or re-tagged for the target architecture".to_string()),
+            });
+        }
+        (Some(arch), Some(_)) => {
+            checks.push(CheckResult {
+                name: "architecture".to_string(),
+                status: "pass".to_string(),
+                message: format!("Architectures match: {}", arch),
+                suggestion: None,
+            });
+        }
+        _ => {
+            checks.push(CheckResult {
+                name: "architecture".to_string(),
+                status: "warn".to_string(),
+                message: "Could not detect architectures".to_string(),
+                suggestion: Some("Verify architectures manually before proceeding".to_string()),
+            });
+        }
+    }
+
+    // 2. Database connectivity checks
+    for db_svc in &plan.databases {
+        let check_name = format!("db-connectivity-{}", db_svc.service_name);
+        // Try docker exec commands to verify connectivity
+        // Container migration: try the source endpoint
+        // Compose migration: try the source endpoint
+        match try_db_connectivity(&state, &plan.source_endpoint, db_svc).await {
+            Ok(true) => {
+                checks.push(CheckResult {
+                    name: check_name,
+                    status: "pass".to_string(),
+                    message: format!("{} ({}) is reachable", db_svc.service_name, db_svc.db_type),
+                    suggestion: None,
+                });
+            }
+            Ok(false) => {
+                checks.push(CheckResult {
+                    name: check_name,
+                    status: "warn".to_string(),
+                    message: format!("{} ({}) connectivity check failed — could not verify. Test manually.", db_svc.service_name, db_svc.db_type),
+                    suggestion: Some("Run 'docker exec <container> pg_isready' or equivalent manually".to_string()),
+                });
+            }
+            Err(e) => {
+                checks.push(CheckResult {
+                    name: check_name,
+                    status: "warn".to_string(),
+                    message: format!("{}: {}", db_svc.service_name, e),
+                    suggestion: Some("Ensure Docker access is available or test manually".to_string()),
+                });
+            }
+        }
+    }
+
+    // 3. Warnings from plan
+    for warning in &plan.warnings {
+        checks.push(CheckResult {
+            name: "plan-warning".to_string(),
+            status: "warn".to_string(),
+            message: warning.clone(),
+            suggestion: None,
+        });
+    }
+
+    // 4. Volume count summary
+    let active_volumes: Vec<_> = plan.volumes.iter().filter(|v| !v.skip).collect();
+    checks.push(CheckResult {
+        name: "volumes".to_string(),
+        status: if active_volumes.is_empty() && !plan.volumes.is_empty() { "warn".to_string() } else { "pass".to_string() },
+        message: format!(
+            "{} volumes total, {} will be transferred, {} skipped",
+            plan.volumes.len(),
+            active_volumes.len(),
+            plan.volumes.len() - active_volumes.len(),
+        ),
+        suggestion: if active_volumes.is_empty() && !plan.volumes.is_empty() {
+            Some("All volumes marked as skipped — no data will be transferred".to_string())
+        } else {
+            None
+        },
+    });
+
+    // Audit
+    state.audit_log.record(
+        "migration.unified.preflight",
+        &plan.source_endpoint,
+        &plan_id,
+        &format!("preflight: {} checks", checks.len()),
+        "gateway",
+    ).await;
+
+    Ok(Json(PreflightResults { checks }))
+}
+
+// ── GET /api/migration/unified/plan/:id ──────────────────────────────
+
+/// Retrieve a stored unified migration plan by ID.
+pub async fn get_unified_plan(
+    State(state): State<Arc<crate::AppState>>,
+    Path(plan_id): Path<String>,
+) -> ApiResult<UnifiedPlan> {
+    let db = state.registry.db();
+
+    let plan = db
+        .load_plan(&plan_id)
+        .ok_or_else(|| error(StatusCode::NOT_FOUND, &format!("Migration plan '{}' not found", plan_id)))?;
+
+    // Audit
+    state.audit_log.record(
+        "migration.unified.get",
+        &plan.source_endpoint,
+        &plan_id,
+        "retrieved unified plan",
+        "gateway",
+    ).await;
+
+    Ok(Json(plan))
+}
+
+// ── Conversion helpers ───────────────────────────────────────────────
+
+/// Convert old container MigrationPlan → new unified MigrationPlan.
+fn convert_container_plan(
+    plan_id: &str,
+    old: &crate::models::migration::MigrationPlan,
+    now: &str,
+) -> UnifiedPlan {
+    let volumes: Vec<UnifiedVolume> = old
+        .volumes
+        .iter()
+        .map(|v| UnifiedVolume {
+            source_name: v.name.clone(),
+            target_name: v.target_name.clone().unwrap_or_else(|| v.name.clone()),
+            driver: Some(v.driver.clone()),
+            target_driver: v.target_driver.clone(),
+            size_bytes: v.size_bytes,
+            mount_point: v.target_path.clone(),
+            skip: v.skip,
+            transfer_method: if v.transfer_method.is_empty() { None } else { Some(v.transfer_method.clone()) },
+        })
+        .collect();
+
+    let databases: Vec<UnifiedDatabase> = old
+        .db_connections
+        .iter()
+        .map(|db| UnifiedDatabase {
+            service_name: "container".to_string(),
+            db_type: DatabaseType::Other("unknown".to_string()),
+            username: None,
+            password: None,
+            password_masked: Some(db.value_masked.clone()),
+            port: None,
+            database_name: None,
+            image: String::new(),
+            version: None,
+            pre_transfer_commands: vec![],
+            post_transfer_commands: vec![],
+            has_replication: false,
+            connectivity_verified: false,
+        })
+        .collect();
+
+    let env_vars: Vec<UnifiedEnvVar> = old
+        .env_vars
+        .iter()
+        .filter_map(|e| {
+            e.split_once('=').map(|(k, v)| UnifiedEnvVar {
+                service_name: old.container_name.clone(),
+                var_name: k.to_string(),
+                source_value: Some(v.to_string()),
+                target_value: Some(v.to_string()),
+                is_sensitive: k.to_lowercase().contains("password") || k.to_lowercase().contains("secret"),
+                will_break: false,
+                break_reason: None,
+            })
+        })
+        .collect();
+
+    UnifiedPlan {
+        plan_id: plan_id.to_string(),
+        migration_type: MigrationType::Container,
+        source_endpoint: old.source_endpoint.clone(),
+        target_endpoint: old.target_endpoint.clone(),
+        stack_name: old.container_name.clone(),
+        target_stack_name: None,
+        source_architecture: None,
+        target_architecture: None,
+        volumes,
+        databases,
+        env_vars,
+        services: vec![],
+        images: vec![],
+        warnings: old.warnings.clone(),
+        estimated_size_bytes: old.estimated_size_bytes,
+        created_at: now.to_string(),
+    }
+}
+
+/// Convert ComposeDiff → unified MigrationPlan.
+fn convert_compose_diff_to_plan(
+    plan_id: &str,
+    diff: &ComposeDiff,
+    source_endpoint: &str,
+    target_endpoint: &str,
+    stack_name: &str,
+    src_arch: Option<String>,
+    tgt_arch: Option<String>,
+    now: &str,
+) -> UnifiedPlan {
+    let volumes: Vec<UnifiedVolume> = diff
+        .volume_changes
+        .iter()
+        .map(|vc| UnifiedVolume {
+            source_name: vc.source_name.clone().unwrap_or_else(|| vc.name.clone()),
+            target_name: vc.name.clone(),
+            driver: vc.driver.clone(),
+            target_driver: vc.driver.clone(),
+            size_bytes: None,
+            mount_point: None,
+            skip: vc.change_type == "removed",
+            transfer_method: None,
+        })
+        .collect();
+
+    let databases: Vec<UnifiedDatabase> = diff
+        .database_services
+        .iter()
+        .map(|ds| UnifiedDatabase {
+            service_name: ds.service_name.clone(),
+            db_type: ds.db_type.clone(),
+            username: ds.username.clone(),
+            password: None,
+            password_masked: ds.password_masked.clone(),
+            port: ds.port.clone(),
+            database_name: ds.database_name.clone(),
+            image: ds.image.clone(),
+            version: ds.version.clone(),
+            pre_transfer_commands: ds.pre_transfer_commands.clone(),
+            post_transfer_commands: ds.post_transfer_commands.clone(),
+            has_replication: ds.has_replication,
+            connectivity_verified: false,
+        })
+        .collect();
+
+    let env_vars: Vec<UnifiedEnvVar> = diff
+        .env_changes
+        .iter()
+        .map(|ec| UnifiedEnvVar {
+            service_name: ec.service_name.clone(),
+            var_name: ec.var_name.clone(),
+            source_value: ec.old_value.clone(),
+            target_value: ec.new_value.clone().or(ec.old_value.clone()),
+            is_sensitive: ec.is_sensitive,
+            will_break: false,
+            break_reason: None,
+        })
+        .collect();
+
+    let services: Vec<UnifiedService> = diff
+        .service_changes
+        .iter()
+        .map(|sc| {
+            let action = match sc.change_type.as_str() {
+                "removed" => ServiceAction::Skip,
+                "added" => ServiceAction::AddTargetOnly,
+                _ => ServiceAction::Migrate,
+            };
+            UnifiedService {
+                name: sc.name.clone(),
+                action,
+                image_override: sc.image_new.clone(),
+                restart_policy: None,
+                port_overrides: vec![],
+            }
+        })
+        .collect();
+
+    let images: Vec<ImageOverride> = diff
+        .image_changes
+        .iter()
+        .map(|ic| ImageOverride {
+            service_name: ic.service_name.clone(),
+            old_image: ic.old_image.clone(),
+            new_image: ic.new_image.clone(),
+            major_version_change: ic.major_version_change,
+        })
+        .collect();
+
+    UnifiedPlan {
+        plan_id: plan_id.to_string(),
+        migration_type: MigrationType::Compose,
+        source_endpoint: source_endpoint.to_string(),
+        target_endpoint: target_endpoint.to_string(),
+        stack_name: stack_name.to_string(),
+        target_stack_name: None,
+        source_architecture: src_arch,
+        target_architecture: tgt_arch,
+        volumes,
+        databases,
+        env_vars,
+        services,
+        images,
+        warnings: diff.warnings.clone(),
+        estimated_size_bytes: 0,
+        created_at: now.to_string(),
+    }
+}
+
+/// Try to verify DB connectivity by running docker exec commands.
+async fn try_db_connectivity(
+    state: &Arc<crate::AppState>,
+    endpoint_id: &str,
+    db: &UnifiedDatabase,
+) -> Result<bool, String> {
+    let docker = match helpers::resolve_client(state, Some(endpoint_id)).await {
+        Ok(client) => client,
+        Err(_) => return Err("could not resolve Docker client".to_string()),
+    };
+
+    // Find the container by service name
+    let containers = docker
+        .list_containers::<String>(None)
+        .await
+        .map_err(|e| format!("failed to list containers: {}", e))?;
+
+    let container = containers.iter().find(|c| {
+        c.names.as_ref().map_or(false, |names| {
+            names.iter().any(|n| n.contains(&db.service_name))
+        })
+    });
+
+    let container_id = match container {
+        Some(c) => c.id.as_deref().unwrap_or(""),
+        None => return Err(format!("container '{}' not found", db.service_name)),
+    };
+
+    if container_id.is_empty() {
+        return Err(format!("container '{}' has no ID", db.service_name));
+    }
+
+    // Build check command based on DB type
+    let check_cmd = match &db.db_type {
+        DatabaseType::PostgreSQL => {
+            format!("pg_isready -U {} -h localhost", db.username.as_deref().unwrap_or("postgres"))
+        }
+        DatabaseType::MySQL => {
+            format!("mysqladmin ping -u {} -h localhost", db.username.as_deref().unwrap_or("root"))
+        }
+        DatabaseType::Redis => "redis-cli ping".to_string(),
+        DatabaseType::MongoDB => "mongosh --eval 'db.runCommand({ping:1})' --quiet".to_string(),
+        DatabaseType::Other(_) => return Err("unsupported database type for connectivity check".to_string()),
+    };
+
+    // Run docker exec
+    use bollard::exec::{CreateExecOptions, StartExecResults};
+    use futures::StreamExt;
+
+    let exec = docker
+        .create_exec(
+            container_id,
+            CreateExecOptions {
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                cmd: Some(vec!["sh", "-c", &check_cmd]),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| format!("failed to create exec: {}", e))?;
+
+    let output = docker
+        .start_exec(&exec.id, None)
+        .await
+        .map_err(|e| format!("failed to start exec: {}", e))?;
+
+    match output {
+        StartExecResults::Attached { mut output, .. } => {
+            let mut buf = Vec::new();
+            while let Some(chunk) = output.next().await {
+                match chunk {
+                    Ok(bollard::container::LogOutput::StdOut { message }) => buf.extend_from_slice(&message),
+                    Ok(bollard::container::LogOutput::StdErr { message }) => buf.extend_from_slice(&message),
+                    _ => {}
+                }
+            }
+            let result = String::from_utf8_lossy(&buf);
+            Ok(result.contains("accepting connections")
+                || result.contains("is alive")
+                || result.contains("PONG")
+                || result.contains("ok"))
+        }
+        _ => Err("could not attach to exec output".to_string()),
+    }
 }

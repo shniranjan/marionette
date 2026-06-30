@@ -73,6 +73,105 @@ function SummaryTable({ rows }) {
   );
 }
 
+function CommandBlock({ commands, label }) {
+  const [copied, setCopied] = React.useState(false);
+
+  if (!commands || commands.length === 0) return null;
+
+  const text = commands.join('\n');
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  return (
+    <div style={{ marginTop: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{label}</span>
+        <button
+          onClick={handleCopy}
+          style={{
+            fontSize: '0.65rem',
+            padding: '2px 8px',
+            border: '1px solid var(--border-color)',
+            borderRadius: '4px',
+            background: copied ? 'var(--green-dim)' : 'var(--bg-tertiary)',
+            color: copied ? 'var(--green)' : 'var(--text-secondary)',
+            cursor: 'pointer',
+          }}
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre
+        style={{
+          background: 'var(--bg-tertiary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: '6px',
+          padding: '10px 14px',
+          fontSize: '0.72rem',
+          fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
+          color: 'var(--text-primary)',
+          overflowX: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          margin: 0,
+          lineHeight: '1.5',
+        }}
+      >
+        <code>{text}</code>
+      </pre>
+    </div>
+  );
+}
+
+function DatabaseServiceDetail({ ds }) {
+  const dbTypeStr = typeof ds.dbType === 'string' ? ds.dbType :
+    (ds.dbType?.PostgreSQL || ds.dbType?.MySQL || ds.dbType?.MongoDB || ds.dbType?.Redis || ds.dbType?.Other || '—');
+
+  return (
+    <div style={{
+      padding: '12px',
+      background: 'var(--bg-secondary)',
+      borderRadius: '8px',
+      marginTop: '8px',
+    }}>
+      <table style={{ width: '100%', marginBottom: '12px' }}>
+        <thead>
+          <tr>
+            <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Service</th>
+            <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Type</th>
+            <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Image</th>
+            <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Version</th>
+            {ds.username && <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>User</th>}
+            {ds.port && <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Port</th>}
+            {ds.databaseName && <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Database</th>}
+            <th style={{ fontSize: '0.75rem', textAlign: 'left' }}>Replication</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{ fontSize: '0.8rem' }}><strong>{ds.serviceName}</strong></td>
+            <td style={{ fontSize: '0.8rem' }}>{dbTypeStr}</td>
+            <td style={{ fontSize: '0.8rem' }}>{ds.image}</td>
+            <td style={{ fontSize: '0.8rem' }}>{ds.version || '—'}</td>
+            {ds.username && <td style={{ fontSize: '0.8rem' }}>{ds.username}</td>}
+            {ds.port && <td style={{ fontSize: '0.8rem' }}>{ds.port}</td>}
+            {ds.databaseName && <td style={{ fontSize: '0.8rem' }}>{ds.databaseName}</td>}
+            <td style={{ fontSize: '0.8rem' }}>{ds.hasReplication ? '✓' : '✗'}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <CommandBlock commands={ds.preTransferCommands} label="Pre-transfer Commands" />
+      <CommandBlock commands={ds.postTransferCommands} label="Post-transfer Commands" />
+    </div>
+  );
+}
+
 export default function DiffPanel({ diff }) {
   if (!diff) return null;
 
@@ -214,13 +313,9 @@ export default function DiffPanel({ diff }) {
           <summary style={{ cursor: 'pointer', padding: '8px 0', fontWeight: 600, fontSize: '0.9rem' }}>
             Database Services ({databaseServices.length})
           </summary>
-          <SummaryTable rows={databaseServices.map(ds => ({
-            service: ds.serviceName,
-            type: typeof ds.dbType === 'string' ? ds.dbType : (ds.dbType?.PostgreSQL || ds.dbType?.MySQL || ds.dbType?.MongoDB || ds.dbType?.Redis || ds.dbType?.Other || '—'),
-            image: ds.image,
-            version: ds.version,
-            replication: ds.hasReplication,
-          }))} />
+          {databaseServices.map((ds, i) => (
+            <DatabaseServiceDetail key={i} ds={ds} />
+          ))}
         </details>
       )}
 

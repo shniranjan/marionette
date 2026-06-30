@@ -92,12 +92,24 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
             CREATE INDEX IF NOT EXISTS idx_endpoints_name ON endpoints(name);
             CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
-            CREATE INDEX IF NOT EXISTS idx_routes_path ON routes(path);"
+            CREATE INDEX IF NOT EXISTS idx_routes_path ON routes(path);
+
+            CREATE TABLE IF NOT EXISTS migration_plans (
+                plan_id TEXT PRIMARY KEY,
+                migration_type TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_migration_plans_type ON migration_plans(migration_type);"
         ).expect("Failed to create schema");
 
         // Idempotent migration: add cert_path column (v0.2.2)
         // Ignore error if column already exists (restart safety)
         conn.execute("ALTER TABLE endpoints ADD COLUMN cert_path TEXT", []).ok();
+
+        // Idempotent migration: add stacks_dir column (v0.2.3)
+        conn.execute("ALTER TABLE endpoints ADD COLUMN stacks_dir TEXT", []).ok();
 
         tracing::info!("Database initialized at {}", db_path);
 
@@ -112,7 +124,7 @@ impl Database {
     pub fn load_endpoints(&self) -> Vec<DockerEndpoint> {
         let conn = self.conn.lock().expect("DB lock poisoned");
         let mut stmt = conn
-            .prepare("SELECT id, name, connection, status, tags, created_at, cert_path FROM endpoints")
+            .prepare("SELECT id, name, connection, status, tags, created_at, cert_path, stacks_dir FROM endpoints")
             .expect("Failed to prepare endpoint query");
 
         let rows = stmt
@@ -124,6 +136,7 @@ impl Database {
                 let tags_json: String = row.get(4)?;
                 let _created: String = row.get(5)?;
                 let cert_path: Option<String> = row.get(6)?;
+                let stacks_dir: Option<String> = row.get(7)?;
 
                 let status = match status_str.as_str() {
                     "connected" => EndpointStatus::Connected,
@@ -139,6 +152,7 @@ impl Database {
                     status,
                     tags,
                     cert_path,
+                    stacks_dir,
                 })
             })
             .expect("Failed to query endpoints");
@@ -154,15 +168,16 @@ impl Database {
         let now = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT INTO endpoints (id, name, connection, status, tags, cert_path, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO endpoints (id, name, connection, status, tags, cert_path, stacks_dir, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 connection=excluded.connection,
                 status=excluded.status,
                 tags=excluded.tags,
-                cert_path=excluded.cert_path",
-            rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, ep.cert_path, now],
+                cert_path=excluded.cert_path,
+                stacks_dir=excluded.stacks_dir",
+            rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, ep.cert_path, ep.stacks_dir, now],
         ).expect("Failed to upsert endpoint");
     }
 
@@ -186,9 +201,9 @@ impl Database {
                 let tags_json = serde_json::to_string(&ep.tags).unwrap_or_else(|_| "[]".to_string());
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
-                    "INSERT INTO endpoints (id, name, connection, status, tags, cert_path, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, ep.cert_path, now],
+                    "INSERT INTO endpoints (id, name, connection, status, tags, cert_path, stacks_dir, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![ep.id, ep.name, ep.connection, status_str, tags_json, ep.cert_path, ep.stacks_dir, now],
                 ).ok();
             }
         }
@@ -506,6 +521,61 @@ impl Database {
             })
             .expect("Failed to query users");
         rows.filter_map(|r| r.ok()).collect()
+    }
+
+    // ── Migration Plans ──────────────────────────────────────────────
+
+    /// Save a unified migration plan to the database.
+    pub fn save_plan(&self, plan: &crate::models::unified_migration::MigrationPlan) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let plan_json = serde_json::to_string(plan).expect("Failed to serialize plan");
+        let migration_type = match plan.migration_type {
+            crate::models::unified_migration::MigrationType::Container => "container",
+            crate::models::unified_migration::MigrationType::Compose => "compose",
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO migration_plans (plan_id, migration_type, plan_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(plan_id) DO UPDATE SET
+                migration_type=excluded.migration_type,
+                plan_json=excluded.plan_json,
+                updated_at=excluded.updated_at",
+            rusqlite::params![plan.plan_id, migration_type, plan_json, now, now],
+        ).expect("Failed to save migration plan");
+    }
+
+    /// Load a single migration plan by ID.
+    pub fn load_plan(&self, plan_id: &str) -> Option<crate::models::unified_migration::MigrationPlan> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare("SELECT plan_json FROM migration_plans WHERE plan_id = ?1")
+            .expect("Failed to prepare plan query");
+        let json: Option<String> = stmt
+            .query_row(rusqlite::params![plan_id], |row| row.get(0))
+            .ok();
+        json.and_then(|j| serde_json::from_str(&j).ok())
+    }
+
+    /// List all stored migration plans.
+    pub fn list_plans(&self) -> Vec<crate::models::unified_migration::MigrationPlan> {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        let mut stmt = conn
+            .prepare("SELECT plan_json FROM migration_plans ORDER BY updated_at DESC")
+            .expect("Failed to prepare plans query");
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("Failed to query plans");
+        rows.filter_map(|r| r.ok())
+            .filter_map(|json| serde_json::from_str(&json).ok())
+            .collect()
+    }
+
+    /// Delete a migration plan by ID.
+    pub fn delete_plan(&self, plan_id: &str) {
+        let conn = self.conn.lock().expect("DB lock poisoned");
+        conn.execute("DELETE FROM migration_plans WHERE plan_id = ?1", rusqlite::params![plan_id])
+            .expect("Failed to delete migration plan");
     }
 }
 
