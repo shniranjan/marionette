@@ -56,9 +56,9 @@ pub struct Message {
 
 impl Message {
     /// Create a new request message.
-    pub fn new_request(id: String, subtype: impl Into<String>, payload: Value) -> Self {
+    pub fn new_request(id: impl Into<String>, subtype: impl Into<String>, payload: Value) -> Self {
         Self {
-            id,
+            id: id.into(),
             msg_type: MessageType::Request,
             subtype: subtype.into(),
             payload,
@@ -68,9 +68,9 @@ impl Message {
     }
 
     /// Create a new response message (success or error).
-    pub fn new_response(id: String, subtype: impl Into<String>, payload: Value) -> Self {
+    pub fn new_response(id: impl Into<String>, subtype: impl Into<String>, payload: Value) -> Self {
         Self {
-            id,
+            id: id.into(),
             msg_type: MessageType::Response,
             subtype: subtype.into(),
             payload,
@@ -80,9 +80,9 @@ impl Message {
     }
 
     /// Create a new streaming event message.
-    pub fn new_event(id: String, subtype: impl Into<String>, payload: Value) -> Self {
+    pub fn new_event(id: impl Into<String>, subtype: impl Into<String>, payload: Value) -> Self {
         Self {
-            id,
+            id: id.into(),
             msg_type: MessageType::Event,
             subtype: subtype.into(),
             payload,
@@ -92,7 +92,7 @@ impl Message {
     }
 
     /// Create an error response message.
-    pub fn new_error(id: String, error_code: &str, message: impl Into<String>, details: Option<Value>) -> Self {
+    pub fn new_error(id: impl Into<String>, error_code: &str, message: impl Into<String>, details: Option<Value>) -> Self {
         let payload = serde_json::json!({
             "error_code": error_code,
             "message": message.into(),
