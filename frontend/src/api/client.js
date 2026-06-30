@@ -73,6 +73,37 @@ export const api = {
   delete(path) {
     return request('DELETE', path);
   },
+
+  // ── Compose Template Migration ──
+
+  /** Analyze compose files between source and target endpoints.
+   *  POST /migration/compose/analyze
+   *  Body: { sourceEndpoint, targetEndpoint, stackName, sourceStacksDir?, targetStacksDir? }
+   *  Returns: { stackName, sourceEndpoint, targetEndpoint, sourceArchitecture, targetArchitecture, diff: ComposeDiff }
+   */
+  analyzeCompose(sourceEndpoint, targetEndpoint, stackName, opts = {}) {
+    return this.post('/migration/compose/analyze', {
+      sourceEndpoint,
+      targetEndpoint,
+      stackName,
+      ...opts,
+    });
+  },
+
+  /** Prepare target endpoint for compose deployment.
+   *  POST /migration/compose/prepare
+   *  Body: { targetEndpoint, stackName, composeYaml, volumes, pullImages? }
+   *  Returns: { stackName, targetEndpoint, results, errors, status }
+   */
+  prepareComposeTarget(targetEndpoint, stackName, composeYaml, volumes, pullImages = true) {
+    return this.post('/migration/compose/prepare', {
+      targetEndpoint,
+      stackName,
+      composeYaml,
+      volumes,
+      pullImages,
+    });
+  },
 };
 
 export function wsUrl(path) {
