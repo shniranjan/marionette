@@ -3,7 +3,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Build](https://github.com/shniranjan/marionette/actions/workflows/ci.yml/badge.svg)](https://github.com/shniranjan/marionette/actions/workflows/ci.yml)
 
-A centralized Docker infrastructure management platform. Manage containers, images, volumes, networks, stacks, and Swarm clusters across multiple hosts — from a single, minimal web UI. Includes the only guided container migration wizard in any Docker management tool.
+A centralized Docker infrastructure management platform. Manage containers, images, volumes, networks, stacks, and Swarm clusters across multiple hosts — from a single, minimal web UI. Includes a guided container migration wizard and a compose-template migration engine with direct pipe transfer (no SSH required).
 
 ---
 
@@ -62,7 +62,7 @@ For multi-host and advanced setup, see [Quickstart Guide](docs/quickstart.md).
 | **Endpoints** | Connect multiple Docker hosts (unix, TCP, TLS). Host switcher in sidebar. Per-endpoint TLS certificate paths. Connection testing. Setup-script generator with auto firewall detection (ufw/firewalld) and systemd integration. |
 | **Swarm** | Nodes, services, tasks, secrets, configs. Init/join/leave. Scale and update services. |
 | **Nginx LB** | Label-driven upstream config generation (`marionette.lb.*`). Regenerate, test, and reload nginx config from the UI. |
-|| **Migration** | 9-step guided wizard. Cold migration with volume sync. Database connection review. Dry run. Automatic execution via Docker API. |
+|| **Migration** | Two migration modes. **Compose-template:** diff source↔target compose files, prepare target (create volumes + pull images), pipe-transfer volumes via Docker API (no SSH), switchover with health-check + rollback. **Container wizard:** 9-step guided cold migration with volume sync, database connection review, dry run, auto-execution. |
 | **System** | Docker info, version, events stream, prune all resource types, audit log |
 | **Auth** | Access key authentication. Multiple key support. Dev mode available. |
 | **Design** | Pico CSS foundation. 6 color palettes × 3 modes (18 visual variants). Dark/Light/Sepia × Blue/Slate/Amber/Green/Violet/Rose. |
@@ -185,7 +185,7 @@ Each endpoint can have its own TLS certificate path (`certPath` field), replacin
 - **Credential Masking:** Environment variables and volume driver options are masked by default in the UI
 - **Socket Proxy:** Remote hosts use `tecnativa/docker-socket-proxy` with granular API permissions
 - **Audit Log:** All mutating actions are logged with timestamp, admin key hash, and target
-- **No SSH Keys Stored:** Migration transfer uses command generation — marionette never holds SSH credentials
+- **No SSH Keys Stored:** Compose-template migration uses bollard direct pipe transfer — volumes stream through the Docker API with no SSH, no temp files, and no credential storage. Container migration uses command generation as a fallback.
 - **Maintenance Overlay:** Client-side detection of server downtime with auto-reconnect
 
 See [Security](docs/security.md) for the full threat model and mitigations.
@@ -199,7 +199,7 @@ See [Security](docs/security.md) for the full threat model and mitigations.
 - **Data loss:** Container removal, volume pruning, and migration can result in permanent data loss. Always back up before migrating.
 - **Service disruption:** Stopping, restarting, or migrating containers will cause downtime. Test in staging environments first.
 - **Access control:** Anyone with the `MARIONETTE_KEY` has full control over your Docker infrastructure. Use a strong key, rotate it regularly, and never expose it in client-side code or logs.
-- **Migration:** Review the generated command plan before executing. Marionette runs commands via the Docker API against the source and target endpoints.
+- **Migration:** Review the generated plan before executing. Compose-template migration streams volumes through the Docker API; container migration runs commands via the Docker API against source and target endpoints.
 - **Remote hosts:** Connecting to remote Docker hosts via Socket Proxy extends the attack surface. Use TLS, firewalls, and granular proxy permissions.
 - **No liability:** The authors and contributors are not responsible for any damage, data loss, or service disruption caused by the use of this software.
 
