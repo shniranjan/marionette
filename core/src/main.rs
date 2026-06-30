@@ -3,6 +3,7 @@ mod models;
 mod audit;
 mod db;
 mod compose;
+mod compose_diff;
 mod migration;
 mod routes;
 mod ws;
@@ -214,6 +215,8 @@ async fn main() {
         .route("/migration/{id}/rollback", post(migration::rollback_migration))
         .route("/migration/{id}/execute", post(migration::execute_migration))
         .route("/migration/transfer", post(migration::transfer_volumes))
+        .route("/migration/compose/analyze", post(migration::analyze_compose))
+        .route("/migration/compose/prepare", post(migration::prepare_compose_target))
         .layer(cors)
         .with_state(state);
 

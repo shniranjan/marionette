@@ -1167,3 +1167,215 @@ pub async fn transfer_volumes(
         "warnings": warnings,
     })))
 }
+
+
+// ── Compose Template Analysis & Preparation ──────────────────────
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposeAnalyzeRequest {
+    pub source_endpoint: String,
+    pub target_endpoint: String,
+    pub stack_name: String,
+    #[serde(default = "default_stacks_dir")]
+    pub source_stacks_dir: String,
+    #[serde(default = "default_stacks_dir")]
+    pub target_stacks_dir: String,
+}
+
+fn default_stacks_dir() -> String {
+    "/stacks".to_string()
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposePrepareRequest {
+    pub target_endpoint: String,
+    pub stack_name: String,
+    pub compose_yaml: String,
+    #[serde(default)]
+    pub volumes: std::collections::HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub pull_images: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Analyze compose files on source and target, returning a structured diff.
+/// POST /migration/compose/analyze
+pub async fn analyze_compose(
+    State(state): State<Arc<crate::AppState>>,
+    Json(body): Json<ComposeAnalyzeRequest>,
+) -> ApiResult<serde_json::Value> {
+    // Resolve both Docker clients
+    let source = helpers::resolve_client(&state, Some(&body.source_endpoint)).await?;
+    let target = helpers::resolve_client(&state, Some(&body.target_endpoint)).await?;
+
+    // Read compose files from both endpoints
+    let (src_yaml, tgt_yaml) = tokio::join!(
+        crate::compose::read_compose_remote(&source, &body.source_stacks_dir, &body.stack_name),
+        crate::compose::read_compose_remote(&target, &body.target_stacks_dir, &body.stack_name),
+    );
+
+    let source_compose = match src_yaml {
+        Ok(y) => y,
+        Err(e) => return Err(error(StatusCode::NOT_FOUND, &e)),
+    };
+    let target_compose = match tgt_yaml {
+        Ok(y) => y,
+        Err(e) => return Err(error(StatusCode::NOT_FOUND, &e)),
+    };
+
+    // Detect architectures
+    let (src_arch, tgt_arch) = tokio::join!(
+        crate::docker::detect_architecture(&source),
+        crate::docker::detect_architecture(&target),
+    );
+
+    let src_arch_str = src_arch.ok();
+    let tgt_arch_str = tgt_arch.ok();
+
+    // Run diff
+    let diff = crate::compose_diff::diff_compose(
+        &source_compose,
+        &target_compose,
+        src_arch_str.as_deref(),
+        tgt_arch_str.as_deref(),
+    )
+    .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    // Audit
+    state
+        .audit_log
+        .record(
+            "migration.compose.analyze",
+            &body.source_endpoint,
+            &body.stack_name,
+            &format!(
+                "Compose diff: {} services, {} volumes, {} DB services",
+                diff.service_changes.len(),
+                diff.volume_changes.len(),
+                diff.database_services.len(),
+            ),
+            "gateway",
+        )
+        .await;
+
+    Ok(Json(serde_json::json!({
+        "stack_name": body.stack_name,
+        "source_endpoint": body.source_endpoint,
+        "target_endpoint": body.target_endpoint,
+        "source_architecture": src_arch_str,
+        "target_architecture": tgt_arch_str,
+        "diff": diff,
+    })))
+}
+
+/// Prepare target for compose deployment — create volumes, pull images.
+/// POST /migration/compose/prepare
+pub async fn prepare_compose_target(
+    State(state): State<Arc<crate::AppState>>,
+    Json(body): Json<ComposePrepareRequest>,
+) -> ApiResult<serde_json::Value> {
+    use bollard::volume::CreateVolumeOptions;
+    use bollard::image::CreateImageOptions;
+    use futures::StreamExt;
+
+    let target = helpers::resolve_client(&state, Some(&body.target_endpoint)).await?;
+    let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    // Pre-create volumes on target
+    for (vol_name, driver) in &body.volumes {
+        match target
+            .create_volume(CreateVolumeOptions {
+                name: vol_name.clone(),
+                driver: driver.clone(),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(_) => {
+                results.push(serde_json::json!({
+                    "type": "volume",
+                    "name": vol_name,
+                    "status": "created"
+                }));
+            }
+            Err(e) => {
+                let msg = format!("Failed to create volume '{}': {}", vol_name, e);
+                errors.push(msg.clone());
+                results.push(serde_json::json!({
+                    "type": "volume",
+                    "name": vol_name,
+                    "status": "failed",
+                    "error": msg
+                }));
+            }
+        }
+    }
+
+    // Pull images if requested
+    if body.pull_images {
+        // Extract image names from compose YAML
+        if let Ok(compose) = serde_yaml::from_str::<serde_yaml::Value>(&body.compose_yaml) {
+            if let Some(services) = compose.get("services").and_then(|s| s.as_mapping()) {
+                for (_name, svc) in services {
+                    if let Some(image) = svc.get("image").and_then(|i| i.as_str()) {
+                        let options = CreateImageOptions {
+                            from_image: image.split(':').next().unwrap_or(image),
+                            tag: image.split(':').nth(1).unwrap_or("latest"),
+                            ..Default::default()
+                        };
+
+                        let mut stream = target.create_image(Some(options), None, None);
+                        let mut pulled = false;
+                        while let Some(chunk) = stream.next().await {
+                            match chunk {
+                                Ok(_) => pulled = true,
+                                Err(e) => {
+                                    let msg = format!("Failed to pull image '{}': {}", image, e);
+                                    errors.push(msg);
+                                    break;
+                                }
+                            }
+                        }
+
+                        results.push(serde_json::json!({
+                            "type": "image",
+                            "name": image,
+                            "status": if pulled { "pulled" } else { "failed" }
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    // Audit
+    state
+        .audit_log
+        .record(
+            "migration.compose.prepare",
+            &body.target_endpoint,
+            &body.stack_name,
+            &format!(
+                "Prepared target: {} volumes, {} results, {} errors",
+                body.volumes.len(),
+                results.len(),
+                errors.len(),
+            ),
+            "gateway",
+        )
+        .await;
+
+    Ok(Json(serde_json::json!({
+        "stack_name": body.stack_name,
+        "target_endpoint": body.target_endpoint,
+        "results": results,
+        "errors": errors,
+        "status": if errors.is_empty() { "success" } else { "partial_success" }
+    })))
+}
