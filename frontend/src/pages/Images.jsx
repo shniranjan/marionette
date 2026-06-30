@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
 import useFilters from '../hooks/useFilters';
 import FilterBar from '../components/FilterBar';
+import SortableTable from '../components/SortableTable';
 
 export default function Images() {
   const [images, setImages] = useState([]);
@@ -42,7 +43,7 @@ export default function Images() {
 
   const filteredIds = useMemo(() => filtered.map(img => img.id), [filtered]);
 
-  const { selected, toggle, selectAll, clear } = useSelection(images, 'id', filteredIds);
+  const { selected, toggle, clear } = useSelection(images, 'id', filteredIds);
 
   const handlePull = async () => {
     if (!pullImage.trim()) return;
@@ -79,6 +80,72 @@ export default function Images() {
     }
   };
 
+  // Prepare data for SortableTable — extract display fields
+  const tableData = useMemo(() => filtered.map(img => {
+    const tags = img.repoTags || [];
+    const primaryTag = tags.length > 0 ? tags[0] : null;
+    const { name, tag } = primaryTag ? splitImageTag(primaryTag) : { name: '<none>', tag: '' };
+    return {
+      ...img,
+      _name: name,
+      _tag: tag || '—',
+      _size: formatSize(img.size),
+      _created: img.created ? new Date(img.created * 1000).toLocaleDateString() : '—',
+      _shortId: img.id?.substring(0, 12) || '—',
+    };
+  }), [filtered]);
+
+  const columns = [
+    {
+      key: '_name',
+      label: 'Name',
+      sortable: true,
+      maxWidth: '280px',
+      render: (v, row) => (
+        <span
+          style={{ fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}
+          onClick={(e) => { e.stopPropagation(); handleInspect(row.id); }}
+        >
+          {v}
+        </span>
+      ),
+    },
+    {
+      key: '_tag',
+      label: 'Tag',
+      sortable: true,
+      maxWidth: '120px',
+      render: (v) => (
+        <span style={{
+          fontSize: '0.7rem', fontWeight: 600, padding: '1px 7px',
+          borderRadius: '10px', whiteSpace: 'nowrap',
+          background: v === 'latest' || v === '—' ? '#1e3a5f' : '#2a1a3f',
+          color: v === 'latest' || v === '—' ? '#60a5fa' : '#a78bfa',
+        }}>
+          {v}
+        </span>
+      ),
+    },
+    {
+      key: '_shortId',
+      label: 'ID',
+      sortable: false,
+      maxWidth: '110px',
+    },
+    {
+      key: '_size',
+      label: 'Size',
+      sortable: true,
+      maxWidth: '90px',
+    },
+    {
+      key: '_created',
+      label: 'Created',
+      sortable: true,
+      maxWidth: '100px',
+    },
+  ];
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
   return (
@@ -111,79 +178,14 @@ export default function Images() {
         totalCount={images.length}
       />
 
-      {filtered.length === 0 ? (
-        <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No images</div>
-      ) : (
-        <div style={{ display: 'grid', gap: '10px' }}>
-          {filtered.map((img) => {
-            const tags = img.repoTags || [];
-            const primaryTag = tags.length > 0 ? tags[0] : null;
-            const { name, tag } = primaryTag ? splitImageTag(primaryTag) : { name: '<none>', tag: '' };
-            const isSel = selected.has(img.id);
-            return (
-              <div key={img.id}
-                onClick={() => toggle(img)}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  padding: '10px 14px',
-                  borderRadius: '8px',
-                  background: isSel ? 'var(--bg-secondary, #1e293b)' : 'var(--card-bg, #0f172a)',
-                  border: isSel ? '2px solid var(--accent, #3b82f6)' : '2px solid var(--card-border, #1e293b)',
-                  transition: 'border-color 0.15s, background 0.15s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0, flex: 1 }}>
-                  <div style={{
-                    width: '22px', height: '22px', minWidth: '22px',
-                    borderRadius: '4px',
-                    background: isSel ? 'var(--accent, #3b82f6)' : 'transparent',
-                    border: isSel ? 'none' : '2px solid var(--card-border, #475569)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#fff', fontSize: '0.75rem', fontWeight: 700,
-                    transition: 'background 0.15s, border-color 0.15s',
-                  }}>
-                    {isSel ? '✓' : ''}
-                  </div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '3px' }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {name}
-                      </span>
-                      {tag && (
-                        <span style={{
-                          fontSize: '0.65rem', fontWeight: 600, padding: '1px 7px',
-                          borderRadius: '10px', whiteSpace: 'nowrap',
-                          background: tag === 'latest' ? '#1e3a5f' : '#2a1a3f',
-                          color: tag === 'latest' ? '#60a5fa' : '#a78bfa',
-                          border: `1px solid ${tag === 'latest' ? '#3b82f6' : '#7c3aed'}33`,
-                        }}>
-                          {tag}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--pico-muted-color)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      ID: {img.id?.substring(0, 12)} &nbsp;|&nbsp;
-                      Size: {formatSize(img.size)} &nbsp;|&nbsp;
-                      Created: {img.created ? new Date(img.created * 1000).toLocaleDateString() : '—'}
-                      {tags.length > 1 && <span> &nbsp;|&nbsp; {tags.slice(1).join(', ')}</span>}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  className="btn-sm"
-                  onClick={(e) => { e.stopPropagation(); handleInspect(img.id); }}
-                  style={{ marginLeft: '12px', flexShrink: 0 }}
-                >
-                  Inspect
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <SortableTable
+        data={tableData}
+        columns={columns}
+        keyField="id"
+        selected={selected}
+        onToggle={toggle}
+        emptyMessage="No images"
+      />
 
       {showPull && (
         <Modal
@@ -235,12 +237,10 @@ function formatSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-/** Split "nginx:latest" into { name: "nginx", tag: "latest" } */
 function splitImageTag(full) {
   if (!full || full === '<none>') return { name: '<none>', tag: '' };
   const lastColon = full.lastIndexOf(':');
   if (lastColon === -1) return { name: full, tag: 'latest' };
-  // Check if the colon is part of a port (e.g., registry:5000/image)
   const afterColon = full.substring(lastColon + 1);
   if (/^\d+$/.test(afterColon) || afterColon.includes('/')) {
     return { name: full, tag: 'latest' };
