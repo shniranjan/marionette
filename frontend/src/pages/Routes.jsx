@@ -56,6 +56,13 @@ export default function Routes() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
+  useEffect(() => {
+    const handler = () => load();
+    window.addEventListener('endpoint:changed', handler);
+    return () => window.removeEventListener('endpoint:changed', handler);
+  }, [load]);
+
   const handleAdd = async () => {
     if (!newPath.trim() || !newTarget.trim()) return;
     if (!newPath.trim().startsWith('/')) {

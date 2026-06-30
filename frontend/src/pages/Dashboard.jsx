@@ -8,6 +8,7 @@ export default function Dashboard({ navigate }) {
   const [system, setSystem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -29,6 +30,13 @@ export default function Dashboard({ navigate }) {
     }
     load();
     return () => { cancelled = true; };
+  }, [reloadVersion]);
+
+  // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
+  useEffect(() => {
+    const handler = () => setReloadVersion(v => v + 1);
+    window.addEventListener('endpoint:changed', handler);
+    return () => window.removeEventListener('endpoint:changed', handler);
   }, []);
 
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
