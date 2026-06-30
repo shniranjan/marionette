@@ -8,6 +8,7 @@ mod routes;
 mod ws;
 mod registry;
 mod helpers;
+mod transfer;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -212,6 +213,7 @@ async fn main() {
         .route("/migration/{id}", get(migration::get_migration))
         .route("/migration/{id}/rollback", post(migration::rollback_migration))
         .route("/migration/{id}/execute", post(migration::execute_migration))
+        .route("/migration/transfer", post(migration::transfer_volumes))
         .layer(cors)
         .with_state(state);
 
