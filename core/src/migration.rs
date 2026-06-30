@@ -1106,3 +1106,64 @@ fn build_s3_commands(
         }
     }
 }
+
+// ── Direct Proxy Transfer ────────────────────────────────────────
+
+use crate::transfer::{self, TransferRequest};
+
+/// Execute volume transfers via bollard direct pipe (no SSH).
+pub async fn transfer_volumes(
+    State(state): State<Arc<crate::AppState>>,
+    Json(body): Json<TransferRequest>,
+) -> ApiResult<serde_json::Value> {
+    // Resolve both Docker clients
+    let source = helpers::resolve_client(&state, Some(&body.source_endpoint)).await?;
+    let target = helpers::resolve_client(&state, Some(&body.target_endpoint)).await?;
+
+    // Pre-flight: ensure alpine:latest on both hosts
+    let (src_alpine, tgt_alpine) = tokio::join!(
+        crate::docker::ensure_alpine_image(&source),
+        crate::docker::ensure_alpine_image(&target),
+    );
+
+    let mut warnings: Vec<String> = Vec::new();
+    if let Err(e) = src_alpine {
+        warnings.push(format!("Source host: {}", e));
+    }
+    if let Err(e) = tgt_alpine {
+        warnings.push(format!("Target host: {}", e));
+    }
+
+    // Execute batch transfer
+    let result = transfer::transfer_volumes_batch(
+        &source,
+        &target,
+        &body.transfers,
+        &body.compression,
+    )
+    .await;
+
+    // Audit
+    state
+        .audit_log
+        .record(
+            "migration.transfer",
+            &body.source_endpoint,
+            "",
+            &format!(
+                "Transferred {} volumes: {} bytes, status={}",
+                result.results.len(),
+                result.total_bytes,
+                result.status,
+            ),
+            "gateway",
+        )
+        .await;
+
+    Ok(Json(serde_json::json!({
+        "results": result.results,
+        "total_bytes": result.total_bytes,
+        "status": result.status,
+        "warnings": warnings,
+    })))
+}

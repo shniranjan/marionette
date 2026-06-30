@@ -158,3 +158,51 @@ pub fn human_bytes(bytes: u64) -> String {
         format!("{:.1}{}", size, UNITS[unit_idx])
     }
 }
+
+use bollard::image::CreateImageOptions;
+use futures::StreamExt;
+
+/// Ensure alpine:latest is available on the given Docker host.
+/// Returns Ok(()) if already present or successfully pulled.
+/// Returns Err if pull fails (missing network, auth required, etc.).
+pub async fn ensure_alpine_image(docker: &Docker) -> Result<(), String> {
+    // Check if alpine:latest already exists
+    match docker.inspect_image("alpine:latest").await {
+        Ok(_) => {
+            tracing::debug!("alpine:latest already present");
+            return Ok(());
+        }
+        Err(bollard::errors::Error::DockerResponseServerError {
+            status_code: 404, ..
+        }) => {
+            // Not found — pull it
+            tracing::info!("Pulling alpine:latest...");
+        }
+        Err(e) => {
+            // Other error (network, auth) — try pull anyway
+            tracing::warn!("Could not inspect alpine image: {}. Will attempt pull.", e);
+        }
+    }
+
+    // Pull alpine:latest
+    let options = CreateImageOptions {
+        from_image: "alpine",
+        tag: "latest",
+        ..Default::default()
+    };
+
+    let mut stream = docker.create_image(Some(options), None, None);
+
+    // Drain the pull stream
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(_) => {} // progress messages, ignore
+            Err(e) => {
+                return Err(format!("Failed to pull alpine:latest: {}", e));
+            }
+        }
+    }
+
+    tracing::info!("alpine:latest pulled successfully");
+    Ok(())
+}
