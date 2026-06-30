@@ -62,23 +62,24 @@ export default function SortableTable({
   }
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table>
+    <div style={{ overflowX: 'auto', maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
+      <table style={{ fontSize: '0.8rem', lineHeight: 1.3, whiteSpace: 'nowrap' }}>
         <thead>
           <tr>
             {hasCheckboxes && (
-              <th style={{ width: '1%' }}>
+              <th style={{ width: '1%', padding: '4px 6px' }}>
                 {onToggleAll && (
                   <input
                     type="checkbox"
                     checked={allSelected || false}
                     onChange={onToggleAll}
+                    style={{ margin: 0 }}
                   />
                 )}
               </th>
             )}
             {hasFav && (
-              <th style={{ width: '1%' }}></th>
+              <th style={{ width: '1%', padding: '4px 2px' }}></th>
             )}
             {columns.map((col) => (
               <th
@@ -88,6 +89,9 @@ export default function SortableTable({
                   cursor: col.sortable !== false ? 'pointer' : 'default',
                   userSelect: 'none',
                   whiteSpace: 'nowrap',
+                  padding: '4px 8px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
                   ...(col.width ? { width: col.width } : {}),
                 }}
               >
@@ -105,16 +109,17 @@ export default function SortableTable({
               style={{ cursor: onRowClick ? 'pointer' : 'default' }}
             >
               {hasCheckboxes && (
-                <td onClick={(e) => e.stopPropagation()}>
+                <td onClick={(e) => e.stopPropagation()} style={{ padding: '3px 6px' }}>
                   <input
                     type="checkbox"
                     checked={selected.has(row[keyField])}
                     onChange={() => onToggle(row[keyField])}
+                    style={{ margin: 0 }}
                   />
                 </td>
               )}
               {hasFav && (
-                <td onClick={(e) => e.stopPropagation()}>
+                <td onClick={(e) => e.stopPropagation()} style={{ padding: '3px 2px' }}>
                   <button
                     onClick={() => fav.onToggle(row[keyField], row.name)}
                     title={fav.isFavorite(row[keyField]) ? 'Unpin' : 'Pin to favorites'}
@@ -122,8 +127,8 @@ export default function SortableTable({
                       border: 'none',
                       background: 'none',
                       cursor: 'pointer',
-                      padding: '2px 4px',
-                      fontSize: '1rem',
+                      padding: '1px 3px',
+                      fontSize: '0.9rem',
                       lineHeight: 1,
                       color: fav.isFavorite(row[keyField]) ? '#f0c040' : 'var(--text-secondary)',
                       opacity: fav.isFavorite(row[keyField]) ? 1 : 0.35,
@@ -139,7 +144,13 @@ export default function SortableTable({
                 </td>
               )}
               {columns.map((col) => (
-                <td key={col.key}>
+                <td key={col.key} style={{
+                  padding: '3px 8px',
+                  maxWidth: col.maxWidth || '240px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
                   {col.render ? col.render(row[col.key], row) : row[col.key]}
                 </td>
               ))}
