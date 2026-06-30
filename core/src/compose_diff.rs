@@ -110,6 +110,28 @@ impl std::fmt::Display for DatabaseType {
     }
 }
 
+/// Parsed semantic version from a Docker image tag.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseVersion {
+    pub major: u32,
+    pub minor: Option<u32>,
+    pub patch: Option<u32>,
+    pub variant: Option<String>,
+}
+
+impl DatabaseVersion {
+    /// True if this version is at least the given major.minor.
+    pub fn at_least(&self, major: u32, minor: u32) -> bool {
+        self.major > major || (self.major == major && self.minor.unwrap_or(0) >= minor)
+    }
+
+    /// True if this version is at least the given major version.
+    pub fn at_least_major(&self, major: u32) -> bool {
+        self.major >= major
+    }
+}
+
 /// Generate a complete diff between two compose YAMLs.
 pub fn diff_compose(
     source_yaml: &str,
@@ -283,14 +305,23 @@ pub fn diff_compose(
                 // ── Database detection ────────────────────
                 if let Some(image) = src_image {
                     if let Some(db_type) = detect_database_type(image) {
+                        let parsed_version = parse_image_version(image);
                         diff.database_services.push(DatabaseService {
                             service_name: name_str.to_string(),
                             db_type: db_type.clone(),
                             image: image.to_string(),
                             version: img_version(image),
                             has_replication: false,
-                            pre_transfer_commands: generate_db_pre_commands(&db_type, name_str),
-                            post_transfer_commands: generate_db_post_commands(&db_type, name_str),
+                            pre_transfer_commands: generate_db_pre_commands(
+                                &db_type,
+                                name_str,
+                                parsed_version.as_ref(),
+                            ),
+                            post_transfer_commands: generate_db_post_commands(
+                                &db_type,
+                                name_str,
+                                parsed_version.as_ref(),
+                            ),
                         });
                     }
                 }
@@ -507,52 +538,260 @@ pub fn img_major_version(image: &str) -> Option<u32> {
     })
 }
 
+/// Parse a Docker image tag into a structured DatabaseVersion.
+///
+/// Handles formats:
+///   - "postgres:15.4-alpine" → major=15, minor=4, variant="alpine"
+///   - "postgres:15"          → major=15
+///   - "postgres:latest"      → None
+///   - "mysql:8.0.36-debian"  → major=8, minor=0, patch=36, variant="debian"
+///   - "mariadb:10.11"        → major=10, minor=11
+pub fn parse_image_version(image: &str) -> Option<DatabaseVersion> {
+    let tag = img_version(image)?;
+    let tag_lower = tag.to_lowercase();
+
+    // "latest" or other non-numeric tags
+    if tag_lower == "latest" {
+        return None;
+    }
+
+    // Split version from variant on first '-'
+    // Known variant suffixes (OS/distro/edition)
+    let known_variants = [
+        "alpine", "slim", "debian", "bullseye", "bookworm", "buster",
+        "stretch", "jessie", "oracle", "percona", "focal", "jammy",
+        "noble", "windowsservercore", "nanoserver",
+    ];
+
+    let (version_part, variant) = if let Some(idx) = tag.find('-') {
+        let suffix = &tag[idx + 1..];
+        // Check if suffix matches a known variant or starts with a letter
+        let suffix_lower = suffix.to_lowercase();
+        let is_variant = known_variants.iter().any(|v| suffix_lower.starts_with(v))
+            || suffix.chars().next().map_or(false, |c| c.is_alphabetic());
+        if is_variant {
+            (&tag[..idx], Some(suffix.to_string()))
+        } else {
+            (tag.as_str(), None)
+        }
+    } else {
+        (tag.as_str(), None)
+    };
+
+    // Parse version numbers
+    let parts: Vec<&str> = version_part.split('.').collect();
+    let major = parts.first()?.parse::<u32>().ok()?;
+    let minor = parts.get(1).and_then(|s| s.parse::<u32>().ok());
+    let patch = parts.get(2).and_then(|s| s.parse::<u32>().ok());
+
+    // If we can't parse even a major version, it's not a versioned tag
+    Some(DatabaseVersion {
+        major,
+        minor,
+        patch,
+        variant,
+    })
+}
+
 /// Generate pre-transfer database commands (run on source).
-pub fn generate_db_pre_commands(db_type: &DatabaseType, service_name: &str) -> Vec<String> {
+///
+/// Produces real, actionable docker exec commands for dump + lock.
+/// Version-aware: PostgreSQL ≥ 9 uses custom format, Redis ≥ 6 uses --rdb flag.
+pub fn generate_db_pre_commands(
+    db_type: &DatabaseType,
+    service_name: &str,
+    version: Option<&DatabaseVersion>,
+) -> Vec<String> {
+    let container = service_name;
     match db_type {
-        DatabaseType::PostgreSQL => vec![
-            format!("# For service '{}': set database to read-only before transfer", service_name),
-            "# docker exec <container> psql -U postgres -c \"ALTER DATABASE dbname SET default_transaction_read_only = on;\"".to_string(),
-        ],
-        DatabaseType::MySQL => vec![
-            format!("# For service '{}': flush and lock before transfer", service_name),
-            "# docker exec <container> mysql -u root -e \"FLUSH TABLES WITH READ LOCK;\"".to_string(),
-        ],
-        DatabaseType::MongoDB => vec![
-            format!("# For service '{}': fsync and lock before transfer", service_name),
-            "# docker exec <container> mongosh --eval \"db.fsyncLock()\"".to_string(),
-        ],
-        DatabaseType::Redis => vec![
-            format!("# For service '{}': trigger BGSAVE before transfer", service_name),
-            "# docker exec <container> redis-cli BGSAVE".to_string(),
-        ],
+        DatabaseType::PostgreSQL => {
+            let use_custom_fmt = version.map_or(true, |v| v.at_least_major(9));
+            let fmt_flag = if use_custom_fmt { "Fc" } else { "Fp" };
+            let dump_ext = if use_custom_fmt { "custom" } else { "sql" };
+            vec![
+                format!("# === PostgreSQL pre-transfer for '{}' ===", service_name),
+                format!(
+                    "docker exec {} psql -U postgres -c \"ALTER DATABASE postgres SET default_transaction_read_only = on;\"",
+                    container
+                ),
+                format!(
+                    "docker exec {} pg_dump -{} -f /tmp/dump.{} -U postgres -d postgres",
+                    container, fmt_flag, dump_ext
+                ),
+                format!(
+                    "docker cp {}:/tmp/dump.{} ./dump.{}",
+                    container, dump_ext, dump_ext
+                ),
+            ]
+        }
+        DatabaseType::MySQL => {
+            let is_mariadb = version
+                .and_then(|v| v.variant.as_deref())
+                .map_or(false, |var| var.contains("mariadb"));
+            let dump_tool = if is_mariadb {
+                "mariadb-dump"
+            } else {
+                "mysqldump"
+            };
+            vec![
+                format!("# === MySQL/MariaDB pre-transfer for '{}' ===", service_name),
+                format!(
+                    "docker exec {} mysql -u root -e \"FLUSH TABLES WITH READ LOCK;\"",
+                    container
+                ),
+                format!(
+                    "docker exec {} sh -c \"{} --single-transaction --quick --routines --triggers --all-databases -u root > /tmp/dump.sql\"",
+                    container, dump_tool
+                ),
+                format!("docker cp {}:/tmp/dump.sql ./dump.sql", container),
+            ]
+        }
+        DatabaseType::MongoDB => {
+            vec![
+                format!("# === MongoDB pre-transfer for '{}' ===", service_name),
+                format!(
+                    "docker exec {} mongosh --eval \"db.fsyncLock()\"",
+                    container
+                ),
+                format!(
+                    "docker exec {} mongodump --archive=/tmp/dump.archive",
+                    container
+                ),
+                format!(
+                    "docker cp {}:/tmp/dump.archive ./dump.archive",
+                    container
+                ),
+            ]
+        }
+        DatabaseType::Redis => {
+            let use_rdb_flag = version.map_or(true, |v| v.at_least_major(6));
+            if use_rdb_flag {
+                vec![
+                    format!("# === Redis pre-transfer for '{}' (>= 6) ===", service_name),
+                    format!("docker exec {} redis-cli BGSAVE", container),
+                    format!(
+                        "docker exec {} redis-cli --rdb /tmp/dump.rdb",
+                        container
+                    ),
+                    format!(
+                        "docker cp {}:/tmp/dump.rdb ./dump.rdb",
+                        container
+                    ),
+                ]
+            } else {
+                vec![
+                    format!("# === Redis pre-transfer for '{}' (< 6) ===", service_name),
+                    format!("docker exec {} redis-cli BGSAVE", container),
+                    format!(
+                        "# Wait for BGSAVE to complete: docker exec {} redis-cli LASTSAVE",
+                        container
+                    ),
+                    format!(
+                        "docker cp {}:/data/dump.rdb ./dump.rdb",
+                        container
+                    ),
+                ]
+            }
+        }
         DatabaseType::Other(_) => vec![
-            format!("# For service '{}': review database-specific pre-transfer steps", service_name),
+            format!(
+                "# For service '{}': review database-specific pre-transfer steps",
+                service_name
+            ),
         ],
     }
 }
 
 /// Generate post-transfer database commands (run on target).
-pub fn generate_db_post_commands(db_type: &DatabaseType, service_name: &str) -> Vec<String> {
+///
+/// Produces real, actionable docker exec commands for restore + unlock.
+/// Version-aware: PostgreSQL ≥ 9 uses pg_restore for custom format.
+pub fn generate_db_post_commands(
+    db_type: &DatabaseType,
+    service_name: &str,
+    version: Option<&DatabaseVersion>,
+) -> Vec<String> {
+    let container = service_name;
     match db_type {
-        DatabaseType::PostgreSQL => vec![
-            format!("# For service '{}': verify and enable writes on target", service_name),
-            "# docker exec <container> psql -U postgres -c \"ALTER DATABASE dbname SET default_transaction_read_only = off;\"".to_string(),
-        ],
-        DatabaseType::MySQL => vec![
-            format!("# For service '{}': verify data on target", service_name),
-            "# docker exec <container> mysql -u root -e \"SHOW DATABASES;\"".to_string(),
-        ],
-        DatabaseType::MongoDB => vec![
-            format!("# For service '{}': unlock on target", service_name),
-            "# docker exec <container> mongosh --eval \"db.fsyncUnlock()\"".to_string(),
-        ],
-        DatabaseType::Redis => vec![
-            format!("# For service '{}': verify data on target", service_name),
-            "# docker exec <container> redis-cli INFO persistence".to_string(),
-        ],
+        DatabaseType::PostgreSQL => {
+            let use_custom_fmt = version.map_or(true, |v| v.at_least_major(9));
+            if use_custom_fmt {
+                vec![
+                    format!("# === PostgreSQL post-transfer for '{}' ===", service_name),
+                    format!(
+                        "docker cp ./dump.custom {}:/tmp/dump.custom",
+                        container
+                    ),
+                    format!(
+                        "docker exec {} pg_restore -d postgres /tmp/dump.custom",
+                        container
+                    ),
+                    format!(
+                        "docker exec {} psql -U postgres -c \"ALTER DATABASE postgres SET default_transaction_read_only = off;\"",
+                        container
+                    ),
+                ]
+            } else {
+                vec![
+                    format!("# === PostgreSQL post-transfer for '{}' ===", service_name),
+                    format!("docker cp ./dump.sql {}:/tmp/dump.sql", container),
+                    format!(
+                        "docker exec {} psql -U postgres -d postgres -f /tmp/dump.sql",
+                        container
+                    ),
+                    format!(
+                        "docker exec {} psql -U postgres -c \"ALTER DATABASE postgres SET default_transaction_read_only = off;\"",
+                        container
+                    ),
+                ]
+            }
+        }
+        DatabaseType::MySQL => {
+            vec![
+                format!("# === MySQL/MariaDB post-transfer for '{}' ===", service_name),
+                format!("docker cp ./dump.sql {}:/tmp/dump.sql", container),
+                format!(
+                    "docker exec {} sh -c \"mysql -u root < /tmp/dump.sql\"",
+                    container
+                ),
+                format!(
+                    "docker exec {} mysql -u root -e \"UNLOCK TABLES;\"",
+                    container
+                ),
+            ]
+        }
+        DatabaseType::MongoDB => {
+            vec![
+                format!("# === MongoDB post-transfer for '{}' ===", service_name),
+                format!(
+                    "docker cp ./dump.archive {}:/tmp/dump.archive",
+                    container
+                ),
+                format!(
+                    "docker exec {} mongorestore --archive=/tmp/dump.archive",
+                    container
+                ),
+                format!(
+                    "docker exec {} mongosh --eval \"db.fsyncUnlock()\"",
+                    container
+                ),
+            ]
+        }
+        DatabaseType::Redis => {
+            vec![
+                format!("# === Redis post-transfer for '{}' ===", service_name),
+                format!("docker cp ./dump.rdb {}:/tmp/dump.rdb", container),
+                format!(
+                    "# Restore: copy dump.rdb into Redis data dir, then restart or SHUTDOWN NOSAVE: docker exec {} redis-cli SHUTDOWN NOSAVE",
+                    container
+                ),
+            ]
+        }
         DatabaseType::Other(_) => vec![
-            format!("# For service '{}': review database-specific post-transfer steps", service_name),
+            format!(
+                "# For service '{}': review database-specific post-transfer steps",
+                service_name
+            ),
         ],
     }
 }
@@ -610,5 +849,236 @@ mod tests {
         let src = "services:\n  db:\n    image: postgres:15\n  cache:\n    image: redis:7\n";
         let diff = diff_compose(src, src, None, None).unwrap();
         assert_eq!(diff.database_services.len(), 2);
+    }
+
+    // ── E1: parse_image_version tests ──────────────────────────
+
+    #[test]
+    fn test_parse_version_full() {
+        let v = parse_image_version("postgres:15.4-alpine").unwrap();
+        assert_eq!(v.major, 15);
+        assert_eq!(v.minor, Some(4));
+        assert_eq!(v.patch, None);
+        assert_eq!(v.variant.as_deref(), Some("alpine"));
+    }
+
+    #[test]
+    fn test_parse_version_major_only() {
+        let v = parse_image_version("postgres:15").unwrap();
+        assert_eq!(v.major, 15);
+        assert_eq!(v.minor, None);
+        assert_eq!(v.patch, None);
+        assert_eq!(v.variant, None);
+    }
+
+    #[test]
+    fn test_parse_version_latest() {
+        assert_eq!(parse_image_version("postgres:latest"), None);
+    }
+
+    #[test]
+    fn test_parse_version_mariadb() {
+        let v = parse_image_version("mariadb:10.11").unwrap();
+        assert_eq!(v.major, 10);
+        assert_eq!(v.minor, Some(11));
+        assert_eq!(v.variant, None);
+    }
+
+    #[test]
+    fn test_parse_version_mysql_debian() {
+        let v = parse_image_version("mysql:8.0.36-debian").unwrap();
+        assert_eq!(v.major, 8);
+        assert_eq!(v.minor, Some(0));
+        assert_eq!(v.patch, Some(36));
+        assert_eq!(v.variant.as_deref(), Some("debian"));
+    }
+
+    #[test]
+    fn test_parse_version_redis_alpine() {
+        let v = parse_image_version("redis:7-alpine").unwrap();
+        assert_eq!(v.major, 7);
+        assert_eq!(v.minor, None);
+        assert_eq!(v.variant.as_deref(), Some("alpine"));
+    }
+
+    #[test]
+    fn test_parse_version_no_tag() {
+        assert_eq!(parse_image_version("nginx"), None);
+    }
+
+    // ── E2: PostgreSQL pre/post command tests ──────────────────
+
+    #[test]
+    fn test_postgres_pre_commands_custom_format() {
+        let v = parse_image_version("postgres:15.4").unwrap();
+        let cmds = generate_db_pre_commands(&DatabaseType::PostgreSQL, "mydb", Some(&v));
+        // Should use custom format (PG >= 9)
+        assert!(cmds.iter().any(|c| c.contains("pg_dump -Fc")));
+        assert!(cmds.iter().any(|c| c.contains("dump.custom")));
+        assert!(cmds.iter().any(|c| c.contains("read_only")));
+        assert!(!cmds.iter().any(|c| c.contains("pg_dump -Fp")));
+    }
+
+    #[test]
+    fn test_postgres_pre_commands_plain_format() {
+        // Old postgres version (< 9) forces plain format
+        let v = DatabaseVersion {
+            major: 8,
+            minor: Some(4),
+            patch: None,
+            variant: None,
+        };
+        let cmds = generate_db_pre_commands(&DatabaseType::PostgreSQL, "olddb", Some(&v));
+        assert!(cmds.iter().any(|c| c.contains("pg_dump -Fp")));
+        assert!(cmds.iter().any(|c| c.contains("dump.sql")));
+    }
+
+    #[test]
+    fn test_postgres_post_commands_restore() {
+        let v = parse_image_version("postgres:15").unwrap();
+        let cmds = generate_db_post_commands(&DatabaseType::PostgreSQL, "mydb", Some(&v));
+        assert!(cmds.iter().any(|c| c.contains("pg_restore")));
+        assert!(cmds.iter().any(|c| c.contains("read_only = off")));
+    }
+
+    // ── E3: MySQL pre/post command tests ───────────────────────
+
+    #[test]
+    fn test_mysql_pre_commands() {
+        let v = parse_image_version("mysql:8.0").unwrap();
+        let cmds = generate_db_pre_commands(&DatabaseType::MySQL, "mysqlsvc", Some(&v));
+        assert!(cmds.iter().any(|c| c.contains("FLUSH TABLES WITH READ LOCK")));
+        assert!(cmds.iter().any(|c| c.contains("mysqldump")));
+        assert!(cmds.iter().any(|c| c.contains("--single-transaction")));
+        assert!(cmds.iter().any(|c| c.contains("--routines")));
+        assert!(cmds.iter().any(|c| c.contains("--triggers")));
+    }
+
+    #[test]
+    fn test_mariadb_uses_mariadb_dump() {
+        // simulate a mariadb variant
+        let v = DatabaseVersion {
+            major: 10,
+            minor: Some(11),
+            patch: None,
+            variant: Some("mariadb".to_string()),
+        };
+        let cmds = generate_db_pre_commands(&DatabaseType::MySQL, "mariadb", Some(&v));
+        assert!(cmds.iter().any(|c| c.contains("mariadb-dump")));
+        assert!(!cmds.iter().any(|c| c.contains("mysqldump")));
+    }
+
+    #[test]
+    fn test_mysql_post_commands() {
+        let cmds = generate_db_post_commands(&DatabaseType::MySQL, "mysqlsvc", None);
+        assert!(cmds.iter().any(|c| c.contains("mysql -u root < /tmp/dump.sql")));
+        assert!(cmds.iter().any(|c| c.contains("UNLOCK TABLES")));
+    }
+
+    // ── E4: MongoDB + Redis command tests ──────────────────────
+
+    #[test]
+    fn test_mongodb_pre_commands() {
+        let cmds = generate_db_pre_commands(&DatabaseType::MongoDB, "mongo", None);
+        assert!(cmds.iter().any(|c| c.contains("db.fsyncLock()")));
+        assert!(cmds.iter().any(|c| c.contains("mongodump --archive=/tmp/dump.archive")));
+    }
+
+    #[test]
+    fn test_mongodb_post_commands() {
+        let cmds = generate_db_post_commands(&DatabaseType::MongoDB, "mongo", None);
+        assert!(cmds.iter().any(|c| c.contains("mongorestore --archive=/tmp/dump.archive")));
+        assert!(cmds.iter().any(|c| c.contains("db.fsyncUnlock()")));
+    }
+
+    #[test]
+    fn test_redis_pre_commands_rdb_flag() {
+        let v = parse_image_version("redis:7-alpine").unwrap();
+        let cmds = generate_db_pre_commands(&DatabaseType::Redis, "cache", Some(&v));
+        assert!(cmds.iter().any(|c| c.contains("redis-cli --rdb")));
+        assert!(cmds.iter().any(|c| c.contains("BGSAVE")));
+    }
+
+    #[test]
+    fn test_redis_pre_commands_legacy() {
+        let v = DatabaseVersion {
+            major: 5,
+            minor: None,
+            patch: None,
+            variant: None,
+        };
+        let cmds = generate_db_pre_commands(&DatabaseType::Redis, "oldcache", Some(&v));
+        assert!(cmds.iter().any(|c| c.contains("BGSAVE")));
+        assert!(cmds.iter().any(|c| c.contains("/data/dump.rdb")));
+        assert!(!cmds.iter().any(|c| c.contains("--rdb")));
+    }
+
+    #[test]
+    fn test_redis_post_commands() {
+        let cmds = generate_db_post_commands(&DatabaseType::Redis, "cache", None);
+        assert!(cmds.iter().any(|c| c.contains("dump.rdb")));
+        assert!(cmds.iter().any(|c| c.contains("SHUTDOWN NOSAVE")));
+    }
+
+    // ── DatabaseVersion methods ───────────────────────────────
+
+    #[test]
+    fn test_db_version_at_least() {
+        let v = DatabaseVersion {
+            major: 9,
+            minor: Some(6),
+            patch: None,
+            variant: None,
+        };
+        assert!(v.at_least(9, 0));
+        assert!(v.at_least(9, 5));
+        assert!(!v.at_least(9, 7));
+        assert!(!v.at_least(10, 0));
+    }
+
+    #[test]
+    fn test_db_version_at_least_major() {
+        let v = DatabaseVersion {
+            major: 6,
+            minor: Some(2),
+            patch: None,
+            variant: None,
+        };
+        assert!(v.at_least_major(6));
+        assert!(v.at_least_major(5));
+        assert!(!v.at_least_major(7));
+    }
+
+    // ── Integration: version-aware commands in diff output ────
+
+    #[test]
+    fn test_diff_postgres_version_aware() {
+        let src = "services:\n  db:\n    image: postgres:15.4-alpine\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(db.version.as_deref(), Some("15.4-alpine"));
+        // Pre commands should use custom format (PG >= 9)
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("pg_dump -Fc")));
+        // Post commands should use pg_restore
+        assert!(db
+            .post_transfer_commands
+            .iter()
+            .any(|c| c.contains("pg_restore")));
+    }
+
+    #[test]
+    fn test_diff_mongodb_commands() {
+        let src = "services:\n  mongo:\n    image: mongo:7\n";
+        let diff = diff_compose(src, src, None, None).unwrap();
+        assert_eq!(diff.database_services.len(), 1);
+        let db = &diff.database_services[0];
+        assert_eq!(db.db_type, DatabaseType::MongoDB);
+        assert!(db.pre_transfer_commands.iter().any(|c| c.contains("mongodump")));
+        assert!(db
+            .post_transfer_commands
+            .iter()
+            .any(|c| c.contains("mongorestore")));
     }
 }
