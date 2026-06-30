@@ -1353,6 +1353,20 @@ export default function Migration({ navigate }) {
         </div>
       </div>
 
+      <div style={{
+        padding: '10px 16px', marginBottom: '16px',
+        background: 'var(--bg-secondary, #1e293b)',
+        border: '1px solid var(--accent, #3b82f6)',
+        borderRadius: '8px', fontSize: '0.85rem',
+        display: 'flex', alignItems: 'center', gap: '12px',
+      }}>
+        <span>📋</span>
+        <span style={{ flex: 1 }}>Migrating an entire stack? Try the new <strong>Compose Template Migration</strong> — diff compose files, pipe volumes directly (no SSH), with health-check and rollback.</span>
+        <button className="btn-sm btn-primary" onClick={() => navigate('migrationCompose')}>
+          Compose Migrate →
+        </button>
+      </div>
+
       {error && (
         <div className="text-danger mb-16" style={{ padding: '12px', background: 'var(--red-dim)', borderRadius: '6px' }}>
           {error}
