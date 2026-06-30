@@ -2,7 +2,7 @@ import YamlEditor from './YamlEditor';
 
 export default function ComposeEditor({ label, value, onChange, readOnly }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', flex: 1, minHeight: 0 }}>
       {label && (
         <label style={{
           fontSize: '0.85rem',
