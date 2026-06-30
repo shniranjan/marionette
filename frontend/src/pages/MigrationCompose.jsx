@@ -214,10 +214,24 @@ export default function MigrationCompose({ navigate }) {
   return (
     <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
       <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ margin: '0 0 4px' }}>Compose Template Migration</h2>
+        <h2 style={{ margin: '0 0 4px' }}>📋 Compose Template Migration</h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>
           Analyze, prepare, and transfer Docker Compose stacks between endpoints
         </p>
+      </div>
+
+      <div style={{
+        padding: '10px 16px', marginBottom: '16px',
+        background: 'var(--bg-secondary, #1e293b)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px', fontSize: '0.85rem',
+        display: 'flex', alignItems: 'center', gap: '12px',
+      }}>
+        <span>🚚</span>
+        <span style={{ flex: 1 }}>Need container-level (not stack) migration? Use the <strong>Container Migration Wizard</strong> — 9-step guided cold migration with database review and command generation.</span>
+        <button className="btn-sm" onClick={() => navigate('migration')}>
+          Container Wizard →
+        </button>
       </div>
 
       {/* Step indicator */}
