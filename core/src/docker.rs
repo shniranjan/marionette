@@ -206,3 +206,9 @@ pub async fn ensure_alpine_image(docker: &Docker) -> Result<(), String> {
     tracing::info!("alpine:latest pulled successfully");
     Ok(())
 }
+
+/// Detect the architecture of a Docker host.
+pub async fn detect_architecture(docker: &Docker) -> Result<String, String> {
+    let info = docker.info().await.map_err(|e| e.to_string())?;
+    Ok(info.architecture.unwrap_or_else(|| "unknown".to_string()))
+}

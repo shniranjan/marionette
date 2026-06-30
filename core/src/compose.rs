@@ -96,3 +96,114 @@ impl ComposeRunner {
         stacks
     }
 }
+
+/// Read a compose file from a remote Docker endpoint via bollard.
+/// Creates an ephemeral alpine container with the stacks directory bind-mounted,
+/// runs `cat` to read the file, captures stdout from container logs.
+pub async fn read_compose_remote(
+    docker: &bollard::Docker,
+    stacks_dir: &str,
+    stack_name: &str,
+) -> Result<String, String> {
+    use bollard::container::{
+        Config, CreateContainerOptions, LogOutput, LogsOptions, RemoveContainerOptions,
+        StartContainerOptions,
+    };
+    use bollard::models::HostConfig;
+    use futures::StreamExt;
+
+    // Try docker-compose.yml first, then compose.yml
+    let file_paths = [
+        format!("{}/{}/docker-compose.yml", stacks_dir.trim_end_matches('/'), stack_name),
+        format!("{}/{}/compose.yml", stacks_dir.trim_end_matches('/'), stack_name),
+    ];
+
+    // Find which compose file exists
+    let mut found_content: Option<String> = None;
+
+    for file_path in &file_paths {
+        let container_name = format!("mari-read-{}", stack_name.chars().take(20).collect::<String>());
+
+        // Create alpine container with stacks dir mounted, command: cat <file>
+        let container = match docker
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: container_name.clone(),
+                    platform: None,
+                }),
+                Config {
+                    image: Some("alpine:latest"),
+                    cmd: Some(vec!["cat", file_path.as_str()]),
+                    host_config: Some(HostConfig {
+                        binds: Some(vec![format!("{}:{}:ro", stacks_dir, stacks_dir)]),
+                        auto_remove: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await
+        {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Start the container
+        if docker
+            .start_container(&container.id, None::<StartContainerOptions<String>>)
+            .await
+            .is_err()
+        {
+            let _ = docker
+                .remove_container(&container.id, None::<RemoveContainerOptions>)
+                .await;
+            continue;
+        }
+
+        // Collect logs (stdout)
+        let mut logs = docker.logs(
+            &container.id,
+            Some(LogsOptions::<String> {
+                follow: true,
+                stdout: true,
+                stderr: true,
+                ..Default::default()
+            }),
+        );
+
+        let mut content = String::new();
+        while let Some(chunk) = logs.next().await {
+            match chunk {
+                Ok(LogOutput::StdOut { message }) => {
+                    content.push_str(&String::from_utf8_lossy(&message));
+                }
+                Ok(LogOutput::StdErr { message }) => {
+                    let err = String::from_utf8_lossy(&message);
+                    if err.contains("No such file") || err.contains("cat:") {
+                        // File not found on this attempt, try next
+                        break;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+
+        // Cleanup
+        let _ = docker
+            .remove_container(&container.id, None::<RemoveContainerOptions>)
+            .await;
+
+        if !content.trim().is_empty() {
+            found_content = Some(content);
+            break;
+        }
+    }
+
+    found_content.ok_or_else(|| {
+        format!(
+            "Compose file not found for stack '{}' in {} — checked docker-compose.yml and compose.yml",
+            stack_name, stacks_dir
+        )
+    })
+}
