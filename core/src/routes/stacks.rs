@@ -6,6 +6,7 @@ use axum::{
 use std::sync::Arc;
 
 use crate::compose::ComposeRunner;
+use crate::helpers;
 use crate::models::*;
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
@@ -18,13 +19,98 @@ fn error(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
 
 pub async fn list_stacks(
     State(state): State<Arc<crate::AppState>>,
-    Query(_params): Query<EndpointQuery>,
+    Query(params): Query<EndpointQuery>,
 ) -> ApiResult<Vec<StackSummary>> {
-    // Note: Stack listing is local-only. Remote Docker endpoints may not have the
-    // docker compose plugin installed. The endpoint query parameter is accepted for
-    // compatibility with the frontend endpoint switcher but has no effect.
+    // If a specific (non-local) endpoint is requested, discover stacks
+    // by listing containers with Docker Compose project labels.
+    if let Some(ref ep_id) = params.endpoint {
+        if ep_id != "local" {
+            return list_remote_stacks(&state, ep_id).await;
+        }
+    }
+
+    // Local: use filesystem-based ComposeRunner
     let compose = ComposeRunner::new(state.stacks_dir.clone());
     let stacks = compose.list_stacks();
+    Ok(Json(stacks))
+}
+
+/// Discover stacks on a remote endpoint by listing containers with
+/// Docker Compose v2 labels (com.docker.compose.project).
+async fn list_remote_stacks(
+    state: &Arc<crate::AppState>,
+    endpoint_id: &str,
+) -> ApiResult<Vec<StackSummary>> {
+    use bollard::container::ListContainersOptions;
+    use std::collections::HashMap;
+
+    let docker = helpers::resolve_client(state, Some(endpoint_id))
+        .await
+        .map_err(|(s, j)| {
+            error(
+                s,
+                &j.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Failed to resolve endpoint"),
+            )
+        })?;
+
+    // List all containers (including stopped) with compose project labels
+    let containers = docker
+        .list_containers(Some(ListContainersOptions::<String> {
+            all: true,
+            ..Default::default()
+        }))
+        .await
+        .map_err(|e| {
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Failed to list containers on remote: {}", e),
+            )
+        })?;
+
+    // Group containers by compose project name
+    let mut projects: HashMap<String, (usize, usize, String)> = HashMap::new();
+    // project_name → (total_services, running_services, status)
+
+    for c in &containers {
+        let labels = c.labels.as_ref();
+        if let Some(project) = labels.and_then(|l| l.get("com.docker.compose.project")) {
+            let state_str = c.state.as_deref().unwrap_or("unknown");
+            let is_running = state_str == "running";
+
+            let entry = projects.entry(project.clone()).or_insert((0, 0, "stopped".to_string()));
+            entry.0 += 1; // total services
+
+            if is_running {
+                entry.1 += 1;
+            }
+        }
+    }
+
+    // Determine overall status per project
+    let stacks: Vec<StackSummary> = projects
+        .into_iter()
+        .map(|(name, (total, running, _))| {
+            let status = if running > 0 {
+                if running == total {
+                    "running".to_string()
+                } else {
+                    "partial".to_string()
+                }
+            } else {
+                "stopped".to_string()
+            };
+
+            StackSummary {
+                name,
+                services: total,
+                status,
+                file: format!("(remote: {})", endpoint_id),
+            }
+        })
+        .collect();
+
     Ok(Json(stacks))
 }
 
