@@ -105,7 +105,6 @@ Marionette manages containers and writes route config. AuxGate (separate contain
 | Document | Contents |
 |----------|----------|
 | [Quickstart Guide](docs/quickstart.md) | Step-by-step from zero to working marionette. Local + multi-host setup, TLS, remote Docker, troubleshooting. |
-| [Architecture](docs/architecture.md) | Process model, data flow, state management, multi-host, migration engine, frontend patterns. |
 | [User Manual](docs/user-manual.md) | Every page and feature documented with usage instructions. |
 | [Tutorial](docs/tutorial.md) | Guided walkthroughs for common workflows — multi-host setup, migration, stack deployment. |
 | [FAQ](docs/faq.md) | Common questions about setup, auth, migration, remote access, and more. |
