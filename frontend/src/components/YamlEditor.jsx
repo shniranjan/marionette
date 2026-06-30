@@ -24,8 +24,9 @@ export default function YamlEditor({ value, onChange, readOnly, fill, showLineNu
     <div style={{
       display: 'flex',
       width: '100%',
-      minHeight: fill ? undefined : '300px',
-      height: fill ? '100%' : undefined,
+      flex: fill ? 1 : undefined,
+      minHeight: fill ? 0 : '300px',
+      height: fill ? undefined : undefined,
       fontFamily: "'JetBrains Mono', monospace",
       fontSize: '0.85rem',
       lineHeight: '1.5',
