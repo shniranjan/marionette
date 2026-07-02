@@ -116,16 +116,18 @@ pub async fn read_compose_remote(
     // Fast path: local endpoint — read directly from filesystem
     if is_local {
         let base = stacks_dir.trim_end_matches('/');
-        for fname in &["docker-compose.yml", "compose.yml"] {
+        for fname in &["docker-compose.yml", "compose.yml", "compose.yaml"] {
             let path = format!("{}/{}/{}", base, stack_name, fname);
             if let Ok(content) = std::fs::read_to_string(&path) {
                 return Ok(content);
             }
         }
-        return Err(format!(
-            "Compose file not found for stack '{}' in {} — checked docker-compose.yml and compose.yml",
+        // Local FS read failed — fall through to Docker API path below
+        // (which creates an alpine container with host-side bind mount)
+        tracing::warn!(
+            "Local compose file not found for stack '{}' in {} — falling back to Docker API",
             stack_name, stacks_dir
-        ));
+        );
     }
 
     // Remote endpoint: create alpine container with bind mount
@@ -138,17 +140,22 @@ pub async fn read_compose_remote(
 
     let bind_source = host_stacks_dir.unwrap_or(stacks_dir);
 
-    // Try docker-compose.yml first, then compose.yml
+    // Try docker-compose.yml first, then compose.yml, then compose.yaml
     let file_paths = [
         format!("{}/{}/docker-compose.yml", stacks_dir.trim_end_matches('/'), stack_name),
         format!("{}/{}/compose.yml", stacks_dir.trim_end_matches('/'), stack_name),
+        format!("{}/{}/compose.yaml", stacks_dir.trim_end_matches('/'), stack_name),
     ];
 
     // Find which compose file exists
     let mut found_content: Option<String> = None;
 
-    for file_path in &file_paths {
-        let container_name = format!("mari-read-{}", stack_name.chars().take(20).collect::<String>());
+    for (idx, file_path) in file_paths.iter().enumerate() {
+        let container_name = format!(
+            "mari-read-{}-{}",
+            stack_name.chars().take(14).collect::<String>(),
+            idx
+        );
 
         // Create alpine container with stacks dir mounted, command: cat <file>
         let container = match docker
@@ -171,15 +178,24 @@ pub async fn read_compose_remote(
             .await
         {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create read container '{}': {}",
+                    container_name, e
+                );
+                continue;
+            }
         };
 
         // Start the container
-        if docker
+        if let Err(e) = docker
             .start_container(&container.id, None::<StartContainerOptions<String>>)
             .await
-            .is_err()
         {
+            tracing::warn!(
+                "Failed to start read container '{}': {}",
+                container_name, e
+            );
             let _ = docker
                 .remove_container(&container.id, None::<RemoveContainerOptions>)
                 .await;
@@ -228,7 +244,7 @@ pub async fn read_compose_remote(
 
     found_content.ok_or_else(|| {
         format!(
-            "Compose file not found for stack '{}' in {} — checked docker-compose.yml and compose.yml",
+            "Compose file not found for stack '{}' in {} — checked docker-compose.yml, compose.yml, compose.yaml",
             stack_name, stacks_dir
         )
     })
