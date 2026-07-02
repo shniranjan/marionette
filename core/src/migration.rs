@@ -1965,7 +1965,7 @@ fn convert_compose_diff_to_plan(
         .iter()
         .map(|sc| {
             let action = match sc.change_type.as_str() {
-                "removed" => ServiceAction::Skip,
+                "removed" => ServiceAction::Migrate, // absent from target → needs creating
                 "added" => ServiceAction::AddTargetOnly,
                 _ => ServiceAction::Migrate,
             };
