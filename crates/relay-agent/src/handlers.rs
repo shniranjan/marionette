@@ -9,6 +9,7 @@ pub fn docker_client() -> &'static Docker {
     DOCKER.get_or_init(|| {
         let host = std::env::var("DOCKER_HOST")
             .unwrap_or_else(|_| "unix:///var/run/docker.sock".into());
+        tracing::info!(%host, "connecting to Docker");
         Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
             .expect(&format!("failed to connect to Docker at {}", host))
     })
