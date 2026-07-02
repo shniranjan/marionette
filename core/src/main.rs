@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
+    Json,
     Router,
     routing::{delete, get, patch, post, put},
 };
@@ -98,6 +99,7 @@ async fn main() {
         .route("/health", get(health))
         // Relay WebSocket
         .route("/relay", get(ws_relay::relay_handler))
+        .route("/relay/send", post(relay_send_command))
         // Containers
         .route("/containers", get(routes::containers::list_containers))
         .route("/containers/{id}", get(routes::containers::inspect_container))
@@ -250,4 +252,42 @@ async fn main() {
 /// Health check endpoint.
 async fn health() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({"status": "ok", "service": "marionette-core", "version": "0.1.0"}))
+}
+
+/// Relay command passthrough — sends a command to the connected relay agent.
+async fn relay_send_command(
+    Json(body): Json<serde_json::Value>,
+) -> Result<axum::Json<serde_json::Value>, (axum::http::StatusCode, axum::Json<serde_json::Value>)> {
+    let id = body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let subtype = body
+        .get("subtype")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ping")
+        .to_string();
+
+    let payload = body
+        .get("payload")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
+
+    let id = if id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        id
+    };
+
+    let msg = relay_protocol::Message::new_request(&id, &subtype, payload);
+
+    match crate::ws_relay::send_relay_command(msg).await {
+        Ok(resp) => Ok(axum::Json(serde_json::to_value(resp).unwrap())),
+        Err(e) => Err((
+            axum::http::StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({"error": e})),
+        )),
+    }
 }
