@@ -2,9 +2,9 @@
 # Build: from marionette repo root:
 #   cargo build --release -p relay-agent
 #   tar -czf - Dockerfile ../target/release/relay-agent | docker build -t relay-agent:latest -
-FROM alpine:3.21
+FROM debian:bookworm-slim
 
-RUN addgroup -S relay && adduser -S relay -G relay
+RUN addgroup --system relay && adduser --system --group relay
 
 COPY relay-agent /usr/local/bin/relay-agent
 
