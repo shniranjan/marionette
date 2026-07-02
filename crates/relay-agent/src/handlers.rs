@@ -7,7 +7,7 @@ static DOCKER: std::sync::OnceLock<Docker> = std::sync::OnceLock::new();
 
 pub fn docker_client() -> &'static Docker {
     DOCKER.get_or_init(|| {
-        Docker::connect_with_unix_defaults()
+        Docker::connect_with_local_defaults()
             .expect("failed to connect to Docker socket at /var/run/docker.sock")
     })
 }
