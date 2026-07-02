@@ -78,12 +78,11 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
     let url = &cfg.relay.marionette_url;
     tracing::info!(%url, "connecting to marionette");
 
+    // Let tokio-tungstenite generate WebSocket headers natively.
+    // For wss:// we pass our TLS connector that accepts self-signed certs.
     let (ws_stream, _response) = if url.starts_with("wss://") {
-        let request = tokio_tungstenite::tungstenite::http::Request::builder()
-            .uri(url.as_str())
-            .body(())?;
         tokio_tungstenite::connect_async_tls_with_config(
-            request,
+            url,
             None,
             false,
             Some(make_wss_connector()),
