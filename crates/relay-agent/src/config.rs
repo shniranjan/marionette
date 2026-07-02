@@ -19,7 +19,7 @@ fn default_marionette_url() -> String {
 }
 
 fn default_heartbeat_secs() -> u64 {
-    15
+    5
 }
 
 impl Config {
@@ -33,7 +33,7 @@ impl Config {
                 heartbeat_interval_secs: std::env::var("HEARTBEAT_INTERVAL_SECS")
                     .ok()
                     .and_then(|s| s.parse().ok())
-                    .unwrap_or(15),
+                    .unwrap_or(5),
                 token: std::env::var("RELAY_TOKEN").ok(),
             },
         })
