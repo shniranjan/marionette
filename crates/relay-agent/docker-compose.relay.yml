@@ -15,9 +15,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/niranjan/dockerComposer:/stacks:ro
     environment:
-      - RUST_LOG=info
-      - MARIONETTE_URL=ws://marionette:9119/relay
-      # - RELAY_TOKEN=***  # uncomment when token auth is enabled
+      RUST_LOG: info
+      MARIONETTE_URL: ws://marionette:9119/relay
+      # RELAY_TOKEN: "your-token-here"  # uncomment when token auth is enabled
 
 networks:
   marionette-net:
