@@ -40,35 +40,11 @@ const PAGES = {
   templates: Templates,
 };
 
-const PAGE_LABELS = {
-  dashboard: 'Dashboard',
-  containers: 'Containers',
-  containerDetail: 'Container',
-  images: 'Images',
-  volumes: 'Volumes',
-  networks: 'Networks',
-  stacks: 'Stacks',
-  system: 'System',
-  endpoints: 'Endpoints',
-  migration: 'Migration',
-  migrationCompose: 'Compose Migrate',
-  swarm: 'Swarm',
-  nginx: 'Nginx LB',
-  routes: 'Routes',
-  templates: 'Templates',
-};
-
 export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [page, setPage] = useState('dashboard');
   const [pageProps, setPageProps] = useState({});
   const [currentEndpoint, setCurrentEndpoint] = useState(() => getCurrentEndpoint());
-  const [recents, setRecents] = useState(() => {
-    try {
-      const raw = localStorage.getItem('marionette_recents');
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
 
   const checkAuth = useCallback(() => {
     setAuthenticated(!!getKey());
@@ -98,25 +74,6 @@ export default function App() {
   const navigate = useCallback((p, props = {}) => {
     setPage(p);
     setPageProps(props);
-
-    // Track recent navigation (skip dashboard)
-    if (p !== 'dashboard') {
-      setRecents((prev) => {
-        const id = props.id || null;
-        const name = props.name || PAGE_LABELS[p] || p;
-        const entry = { id, name, type: p, timestamp: Date.now() };
-
-        // Remove existing entry with same type+id
-        const filtered = prev.filter(
-          (r) => !(r.type === p && r.id === id),
-        );
-
-        // Cap at 10 and prepend
-        const next = [entry, ...filtered].slice(0, 10);
-        try { localStorage.setItem('marionette_recents', JSON.stringify(next)); } catch {}
-        return next;
-      });
-    }
   }, []);
 
   const handleEndpointChange = useCallback((id) => {
@@ -139,7 +96,6 @@ export default function App() {
           onNavigate={navigate}
           currentEndpoint={currentEndpoint}
           onEndpointChange={handleEndpointChange}
-          recents={recents}
         />
         <main className="main-content">
           <Breadcrumb page={page} pageProps={pageProps} onNavigate={navigate} />
