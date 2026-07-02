@@ -1585,7 +1585,8 @@ pub async fn analyze_unified(
             );
 
             let source_compose = src_yaml.map_err(|e| error(StatusCode::NOT_FOUND, &e))?;
-            let target_compose = tgt_yaml.map_err(|e| error(StatusCode::NOT_FOUND, &e))?;
+            // Target may not have the stack yet (fresh deployment) — use empty compose
+            let target_compose = tgt_yaml.unwrap_or_else(|_| "services: {}\n".to_string());
 
             let (src_arch, tgt_arch) = tokio::join!(
                 crate::docker::detect_architecture(&source),
