@@ -44,6 +44,9 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
+    // rustls crypto provider must be installed first
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Logging
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
