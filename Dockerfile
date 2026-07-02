@@ -2,8 +2,16 @@
 FROM rust:1.96-alpine AS rust-builder
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig gcc make
 WORKDIR /build
-COPY core/Cargo.toml core/Cargo.lock ./
-COPY core/src/ ./src/
+# Workspace root
+COPY Cargo.toml Cargo.lock ./
+# Shared protocol crate
+COPY crates/relay-protocol/ crates/relay-protocol/
+# Relay agent crate (manifest only — needed for workspace resolution)
+COPY crates/relay-agent/Cargo.toml crates/relay-agent/
+COPY crates/relay-agent/src/ crates/relay-agent/src/
+# Core crate
+COPY core/Cargo.toml core/Cargo.lock core/
+COPY core/src/ core/src/
 RUN cargo build --release --bin marionette-core
 RUN strip target/release/marionette-core
 

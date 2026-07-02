@@ -1,5 +1,7 @@
 # Rust build artifacts (can be 200MB+)
 core/target/
+target/
+crates/relay-agent/target/
 
 # Node
 node_modules/

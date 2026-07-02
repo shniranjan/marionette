@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "core",
     "crates/relay-protocol",
+    "crates/relay-agent",
 ]
 
 [workspace.dependencies]

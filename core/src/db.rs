@@ -9,7 +9,7 @@ use crate::models::{DockerEndpoint, EndpointStatus, Route, Template, UserRole, U
 /// Central database for Marionette — users, endpoints, routes, audit log.
 /// All tables share one SQLite database at the path configured by MARIONETTE_DB_PATH.
 pub struct Database {
-    conn: Mutex<Connection>,
+    pub conn: Mutex<Connection>,
 }
 
 impl Database {
@@ -103,6 +103,9 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_migration_plans_type ON migration_plans(migration_type);"
         ).expect("Failed to create schema");
+
+        // Relay auth: registration_tokens table
+        crate::relay::auth::ensure_schema(&conn).expect("Failed to create registration_tokens schema");
 
         // Idempotent migration: add cert_path column (v0.2.2)
         // Ignore error if column already exists (restart safety)

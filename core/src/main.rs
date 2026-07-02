@@ -5,12 +5,14 @@ mod db;
 mod compose;
 mod compose_diff;
 mod migration;
+mod relay;
 mod routes;
 mod ws;
 mod registry;
 mod helpers;
 mod transfer;
 mod switchover;
+mod ws_relay;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -94,6 +96,8 @@ async fn main() {
     let app = Router::new()
         // Health
         .route("/health", get(health))
+        // Relay WebSocket
+        .route("/relay", get(ws_relay::relay_handler))
         // Containers
         .route("/containers", get(routes::containers::list_containers))
         .route("/containers/{id}", get(routes::containers::inspect_container))
@@ -221,17 +225,22 @@ async fn main() {
         .route("/migration/compose/switchover", post(migration::switchover_compose))
         .route("/migration/compose/progress", get(ws::progress::switchover_progress_ws))
         // Unified Migration (Wave 1 / ramupel)
-        .route("/api/migration/unified/analyze", post(migration::analyze_unified))
-        .route("/api/migration/unified/plan/{id}", get(migration::get_unified_plan))
-        .route("/api/migration/unified/plan/{id}/edit", post(migration::edit_unified_plan))
-        .route("/api/migration/unified/plan/{id}/preflight", post(migration::preflight_unified))
+        .route("/migration/unified/analyze", post(migration::analyze_unified))
+        .route("/migration/unified/plan/{id}", get(migration::get_unified_plan))
+        .route("/migration/unified/plan/{id}/edit", post(migration::edit_unified_plan))
+        .route("/migration/unified/plan/{id}/preflight", post(migration::preflight_unified))
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:9119")
+    let port: u16 = std::env::var("MARIONETTE_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9119);
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .expect("Failed to bind to 127.0.0.1:9119");
-    tracing::info!("marionette-core listening on 127.0.0.1:9119");
+        .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", addr, e));
+    tracing::info!("marionette-core listening on {}", addr);
 
     axum::serve(listener, app)
         .await
