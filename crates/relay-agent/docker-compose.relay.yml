@@ -1,6 +1,6 @@
 # relay-agent — Marionette sidecar for Docker host operations
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.relay.yml up -d
+#   docker compose -f docker-compose.relay.yml up -d
 
 services:
   relay-agent:
@@ -9,14 +9,17 @@ services:
     restart: unless-stopped
     networks:
       - marionette_marionette-net
+      - hermesagent_default
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/niranjan/dockerComposer:/stacks:ro
     environment:
       RUST_LOG: info
-      MARIONETTE_URL: ws://marionette:9119/relay
+      MARIONETTE_URL: wss://marionette:8443/api/relay
+      DOCKER_HOST: http://socket-proxy:2375
       # RELAY_TOKEN: "your-token-here"
 
 networks:
   marionette_marionette-net:
+    external: true
+  hermesagent_default:
     external: true
