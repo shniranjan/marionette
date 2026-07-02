@@ -7,8 +7,10 @@ static DOCKER: std::sync::OnceLock<Docker> = std::sync::OnceLock::new();
 
 pub fn docker_client() -> &'static Docker {
     DOCKER.get_or_init(|| {
-        Docker::connect_with_local_defaults()
-            .expect("failed to connect to Docker socket at /var/run/docker.sock")
+        let host = std::env::var("DOCKER_HOST")
+            .unwrap_or_else(|_| "unix:///var/run/docker.sock".into());
+        Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+            .expect(&format!("failed to connect to Docker at {}", host))
     })
 }
 
