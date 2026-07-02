@@ -4,7 +4,7 @@
 #   tar -czf - Dockerfile ../target/release/relay-agent | docker build -t relay-agent:latest -
 FROM debian:trixie-slim
 
-RUN addgroup --system relay && adduser --system --group relay
+RUN apt-get update && apt-get install -y --no-install-recommends adduser ca-certificates && rm -rf /var/lib/apt/lists/* && addgroup --system relay && adduser --system --group relay
 
 COPY relay-agent /usr/local/bin/relay-agent
 
