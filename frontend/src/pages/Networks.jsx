@@ -5,6 +5,7 @@ import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
 import useFilters from '../hooks/useFilters';
 import FilterBar from '../components/FilterBar';
+import SortableTable from '../components/SortableTable';
 
 export default function Networks() {
   const [networks, setNetworks] = useState([]);
@@ -42,7 +43,7 @@ export default function Networks() {
 
   const filteredIds = useMemo(() => filtered.map(net => net.id), [filtered]);
 
-  const { selected, toggle, clear } = useSelection(networks, 'id', filteredIds);
+  const { selected, toggle, toggleAll, clear, allFilteredSelected } = useSelection(networks, 'id', filteredIds);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -101,6 +102,23 @@ export default function Networks() {
     }
   };
 
+  const columns = [
+    { key: 'name', label: 'Name', sortable: true },
+    { key: 'driver', label: 'Driver', sortable: true },
+    { key: 'scope', label: 'Scope', sortable: true },
+    {
+      key: 'containers',
+      label: 'Containers',
+      sortable: false,
+      render: (containers) => {
+        if (!containers || Object.keys(containers).length === 0) return <span className="text-secondary">—</span>;
+        const names = Object.values(containers).map(c => c.name).join(', ');
+        const count = Object.keys(containers).length;
+        return <span title={names}>{count} — {names.substring(0, 50)}{names.length > 50 ? '…' : ''}</span>;
+      },
+    },
+  ];
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
   return (
@@ -134,63 +152,18 @@ export default function Networks() {
         totalCount={networks.length}
       />
 
-      {filtered.length === 0 ? (
-        <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>No networks</div>
-      ) : (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          {filtered.map((net) => {
-            const isSel = selected.has(net.id);
-            return (
-              <div key={net.id} className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                    <input
-                      type="checkbox"
-                      checked={isSel}
-                      onChange={() => toggle(net)}
-                      style={{ width: '16px', height: '16px', marginTop: '2px', cursor: 'pointer' }}
-                    />
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{net.name}</div>
-                      <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
-                        ID: {net.id?.substring(0, 12)} &nbsp;|&nbsp;
-                        Driver: {net.driver} &nbsp;|&nbsp;
-                        Scope: {net.scope}
-                        {net.ipam?.config?.length > 0 && (
-                          <span> &nbsp;|&nbsp; Subnet: {net.ipam.config[0].subnet}</span>
-                        )}
-                      </div>
-                      {net.containers && Object.keys(net.containers).length > 0 && (
-                        <div style={{ marginTop: '8px' }}>
-                          <div className="text-secondary" style={{ fontSize: '0.75rem', marginBottom: '4px' }}>
-                            Containers ({Object.keys(net.containers).length}):
-                          </div>
-                          {Object.entries(net.containers).map(([cid, info]) => (
-                            <div key={cid} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                              <span className="mono" style={{ fontSize: '0.75rem' }}>{info.name}</span>
-                              <span className="mono" style={{ fontSize: '0.7rem', color: 'var(--pico-muted-color)' }}>
-                                ({info.ipv4Address})
-                              </span>
-                              <button
-                                className="btn-sm"
-                                style={{ fontSize: '0.65rem', padding: '1px 6px' }}
-                                onClick={() => handleDisconnect(net.id, cid)}
-                              >
-                                Disconnect
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <button className="btn-sm" onClick={() => setShowConnect(net)}>🔗 Connect</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div style={{ overflowX: 'auto' }}>
+        <SortableTable
+          data={filtered}
+          columns={columns}
+          keyField="id"
+          selected={selected}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+          allSelected={allFilteredSelected || false}
+          emptyMessage="No networks"
+        />
+      </div>
 
       {showCreate && (
         <Modal

@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner';
 import ListToolbar, { useSelection } from '../components/ListToolbar';
 import useFilters from '../hooks/useFilters';
 import FilterBar from '../components/FilterBar';
+import SortableTable from '../components/SortableTable';
 
 const DEFAULT_YML = `# docker-compose.yml
 services:
@@ -72,7 +73,10 @@ export default function Stacks() {
       const raw = Array.isArray(stacksData) ? stacksData : (stacksData?.stacks || []);
       const normalized = raw.map(s => ({
         ...s,
+        id: s.id || s.Name || s.name,
+        name: s.Name || s.name,
         status: (s.Status || s.status || 'unknown').toLowerCase(),
+        serviceCount: s.Services || s.serviceCount || 0,
       }));
       setStacks(normalized);
       setContainers(Array.isArray(containersData) ? containersData : []);
@@ -101,7 +105,7 @@ export default function Stacks() {
 
   const filteredIds = useMemo(() => filtered.map(s => s.id || s.Name || s.name), [filtered]);
 
-  const { selected, toggle, clear } = useSelection(stacks, 'id', filteredIds);
+  const { selected, toggle, toggleAll, clear, allFilteredSelected } = useSelection(stacks, 'id', filteredIds);
 
   const stateOptions = [
     { value: 'running', label: 'Running' },
@@ -239,6 +243,76 @@ export default function Stacks() {
     load();
   };
 
+  // ── Columns for SortableTable ──────────────────────────────────
+  const columns = [
+    {
+      key: 'name',
+      label: 'Name',
+      sortable: true,
+      render: (v) => <span style={{ fontWeight: 600 }}>{v}</span>,
+    },
+    {
+      key: 'serviceCount',
+      label: 'Services',
+      sortable: true,
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      sortable: true,
+      render: (v) => <StatusBadge status={v} />,
+    },
+    {
+      key: 'containers',
+      label: 'Containers',
+      sortable: false,
+      render: (_, row) => {
+        const stackContainers = containers.filter(c =>
+          (c.stack || c.Stack || '') === row.name
+        );
+        if (stackContainers.length === 0) return <span className="text-secondary">—</span>;
+        const runningContainers = stackContainers.filter(c => c.state === 'running');
+        return (
+          <span>
+            {runningContainers.length}/{stackContainers.length}
+            {' '}
+            {stackContainers.slice(0, 2).map(c => (
+              <code key={c.id || c.Id} style={{ fontSize: '0.7rem', marginRight: '4px' }}>
+                {c.name || c.Name}
+              </code>
+            ))}
+            {stackContainers.length > 2 && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--pico-muted-color)' }}>…</span>
+            )}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      sortable: false,
+      render: (_, row) => {
+        const isRunning = row.status === 'running';
+        return (
+          <div className="btn-group">
+            <button className="btn-sm" onClick={() => handleEdit(row.name)}>✏ Edit</button>
+            {!isRunning && (
+              <button className="btn-success btn-sm" onClick={() => handleAction(row.name, 'deploy')}>▶ Deploy</button>
+            )}
+            {isRunning && (
+              <>
+                <button className="btn-warning btn-sm" onClick={() => handleAction(row.name, 'stop')}>⏹ Stop</button>
+                <button className="btn-sm" onClick={() => handleAction(row.name, 'down')}>⬇ Down</button>
+              </>
+            )}
+            <button className="btn-danger btn-sm" onClick={() => handleDelete(row.name)}>🗑</button>
+          </div>
+        );
+      },
+    },
+  ];
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
   return (
@@ -274,76 +348,16 @@ export default function Stacks() {
         totalCount={stacks.length}
       />
 
-      {filtered.length === 0 ? (
-        <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>
-          No stacks. Create one to get started.
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          {filtered.map((stack) => {
-            const name = stack.Name || stack.name;
-            const svcCount = stack.Services || stack.serviceCount || 0;
-            const status = (stack.Status || stack.status || 'unknown').toLowerCase();
-            const isRunning = status === 'running';
-            const selKey = stack.id || name;
-            const isSel = selected.has(selKey);
-
-            // Find containers belonging to this stack
-            const stackContainers = containers.filter(c =>
-              (c.stack || c.Stack || '') === name
-            );
-            const runningContainers = stackContainers.filter(c => c.state === 'running');
-            return (
-              <div key={name} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <input
-                    type="checkbox"
-                    checked={isSel}
-                    onChange={() => toggle(stack)}
-                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '1rem' }}>{name}</div>
-                    <div className="text-secondary" style={{ fontSize: '0.75rem', marginTop: '4px' }}>
-                      Services: {svcCount} &nbsp;|&nbsp;
-                      <StatusBadge status={status} />
-                      {stackContainers.length > 0 && (
-                        <span style={{ marginLeft: '8px' }}>
-                          {' '}Containers: {runningContainers.length}/{stackContainers.length}
-                          {' '}
-                          {stackContainers.slice(0, 4).map(c => (
-                            <code key={c.id || c.Id} style={{ fontSize: '0.7rem', marginRight: '4px' }}>
-                              {c.name || c.Name}
-                            </code>
-                          ))}
-                          {stackContainers.length > 4 && (
-                            <span style={{ fontSize: '0.7rem', color: 'var(--pico-muted-color)' }}>
-                              +{stackContainers.length - 4} more
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="btn-group">
-                  <button className="btn-sm" onClick={() => handleEdit(name)}>✏ Edit</button>
-                  {!isRunning && (
-                    <button className="btn-success btn-sm" onClick={() => handleAction(name, 'deploy')}>▶ Deploy</button>
-                  )}
-                  {isRunning && (
-                    <>
-                      <button className="btn-warning btn-sm" onClick={() => handleAction(name, 'stop')}>⏹ Stop</button>
-                      <button className="btn-sm" onClick={() => handleAction(name, 'down')}>⬇ Down</button>
-                    </>
-                  )}
-                  <button className="btn-danger btn-sm" onClick={() => handleDelete(name)}>🗑</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <SortableTable
+        data={filtered}
+        columns={columns}
+        keyField="id"
+        selected={selected}
+        onToggle={toggle}
+        onToggleAll={toggleAll}
+        allSelected={allFilteredSelected || false}
+        emptyMessage="No stacks. Create one to get started."
+      />
 
       {showCreate && (
         <Modal

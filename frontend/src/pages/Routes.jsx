@@ -205,8 +205,9 @@ export default function Routes() {
           No routes configured. Add a route to start proxying traffic.
         </div>
       ) : (
-        <table>
-          <thead>
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
             <tr>
               <th>Path</th>
               <th>Target</th>
@@ -286,6 +287,7 @@ export default function Routes() {
             })}
           </tbody>
         </table>
+        </div>
       )}
 
       {/* Add Modal */}

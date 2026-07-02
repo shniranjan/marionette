@@ -132,17 +132,19 @@ export default function Volumes() {
         ]}
       />
 
-      <SortableTable
-        data={filtered}
-        columns={COLUMNS}
-        keyField="name"
-        onRowClick={(row) => handleInspect(row.name)}
-        selected={selected}
-        onToggle={toggle}
-        onToggleAll={toggleAll}
-        allSelected={allFilteredSelected}
-        emptyMessage="No volumes"
-      />
+      <div style={{ overflowX: 'auto' }}>
+        <SortableTable
+          data={filtered}
+          columns={COLUMNS}
+          keyField="name"
+          onRowClick={(row) => handleInspect(row.name)}
+          selected={selected}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+          allSelected={allFilteredSelected}
+          emptyMessage="No volumes"
+        />
+      </div>
 
       {showCreate && (
         <Modal

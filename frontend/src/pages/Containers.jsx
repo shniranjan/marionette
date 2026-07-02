@@ -373,8 +373,10 @@ export default function Containers({ navigate }) {
         ]}
       />
 
-      {renderTable(pinned, 'Pinned', '★')}
-      {renderTable(unpinned, pinned.length > 0 ? 'All Containers' : null, null)}
+      <div style={{ overflowX: 'auto' }}>
+        {renderTable(pinned, 'Pinned', '★')}
+        {renderTable(unpinned, pinned.length > 0 ? 'All Containers' : null, null)}
+      </div>
 
       {filtered.length === 0 && pinned.length === 0 && (
         <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>

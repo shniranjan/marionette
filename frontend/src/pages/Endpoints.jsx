@@ -192,106 +192,108 @@ export default function Endpoints() {
           No remote endpoints configured. All operations run on the local Docker host.
         </div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Connection</th>
-              <th>Status</th>
-              <th>Containers</th>
-              <th>Tags</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {endpoints.map((ep) => {
-              const id = ep.id || ep.Id;
-              const name = ep.name || ep.Name || '—';
-              const conn = ep.connection || ep.Connection || '';
-              const status = (ep.status || ep.Status || 'unknown').toLowerCase();
-              const containers = ep.container_count ?? ep.ContainerCount ?? '—';
-              const tags = ep.tags || ep.Tags || [];
-              const st = STATUS_STYLES[status] || { dot: 'var(--text-secondary)', label: 'Unknown' };
-              const isLocal = name.toLowerCase() === 'local';
-              const tr = testResults[id];
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Connection</th>
+                <th>Status</th>
+                <th>Containers</th>
+                <th>Tags</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {endpoints.map((ep) => {
+                const id = ep.id || ep.Id;
+                const name = ep.name || ep.Name || '—';
+                const conn = ep.connection || ep.Connection || '';
+                const status = (ep.status || ep.Status || 'unknown').toLowerCase();
+                const containers = ep.container_count ?? ep.ContainerCount ?? '—';
+                const tags = ep.tags || ep.Tags || [];
+                const st = STATUS_STYLES[status] || { dot: 'var(--text-secondary)', label: 'Unknown' };
+                const isLocal = name.toLowerCase() === 'local';
+                const tr = testResults[id];
 
-              return (
-                <tr key={id}>
-                  <td style={{ fontWeight: 600 }}>{name}</td>
-                  <td>
-                    <code style={{
-                      fontSize: '0.75rem',
-                      padding: '2px 6px',
-                      background: 'var(--bg-tertiary)',
-                      borderRadius: '4px',
-                    }}>
-                      {maskConnection(conn)}
-                    </code>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span style={{
-                        width: '8px', height: '8px', borderRadius: '50%',
-                        background: st.dot,
-                        display: 'inline-block',
-                      }} />
-                      <span style={{ fontSize: '0.8rem' }}>{st.label}</span>
-                      {tr && (
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                          ({tr.latency_ms != null ? `${tr.latency_ms}ms` : tr.error || tr.status})
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td>{containers}</td>
-                  <td>
-                    {tags.length > 0 ? tags.map((t, i) => (
-                      <span key={i} style={{
-                        display: 'inline-block',
-                        padding: '1px 8px',
-                        margin: '2px',
-                        borderRadius: '10px',
+                return (
+                  <tr key={id}>
+                    <td style={{ fontWeight: 600 }}>{name}</td>
+                    <td>
+                      <code style={{
+                        fontSize: '0.75rem',
+                        padding: '2px 6px',
                         background: 'var(--bg-tertiary)',
-                        fontSize: '0.7rem',
-                        color: 'var(--text-secondary)',
-                        border: '1px solid var(--border)',
+                        borderRadius: '4px',
                       }}>
-                        {t}
-                      </span>
-                    )) : <span className="text-secondary">—</span>}
-                  </td>
-                  <td>
-                    <div className="btn-group">
-                      <button
-                        className="btn-sm"
-                        onClick={() => handleTest(ep)}
-                        disabled={testing[id]}
-                      >
-                        {testing[id] ? '...' : '🔍 Test'}
-                      </button>
-                      {status === 'disconnected' && (
-                        <button className="btn-sm btn-warning" onClick={() => handleReconnect(ep)}>
-                          🔗 Reconnect
+                        {maskConnection(conn)}
+                      </code>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{
+                          width: '8px', height: '8px', borderRadius: '50%',
+                          background: st.dot,
+                          display: 'inline-block',
+                        }} />
+                        <span style={{ fontSize: '0.8rem' }}>{st.label}</span>
+                        {tr && (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                            ({tr.latency_ms != null ? `${tr.latency_ms}ms` : tr.error || tr.status})
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td>{containers}</td>
+                    <td>
+                      {tags.length > 0 ? tags.map((t, i) => (
+                        <span key={i} style={{
+                          display: 'inline-block',
+                          padding: '1px 8px',
+                          margin: '2px',
+                          borderRadius: '10px',
+                          background: 'var(--bg-tertiary)',
+                          fontSize: '0.7rem',
+                          color: 'var(--text-secondary)',
+                          border: '1px solid var(--border)',
+                        }}>
+                          {t}
+                        </span>
+                      )) : <span className="text-secondary">—</span>}
+                    </td>
+                    <td>
+                      <div className="btn-group">
+                        <button
+                          className="btn-sm"
+                          onClick={() => handleTest(ep)}
+                          disabled={testing[id]}
+                        >
+                          {testing[id] ? '...' : '🔍 Test'}
                         </button>
-                      )}
-                      <button className="btn-sm" onClick={() => openEdit(ep)}>
-                        ✏️ Edit
-                      </button>
-                      <button
-                        className="btn-danger btn-sm"
-                        onClick={() => setShowDelete(ep)}
-                        disabled={isLocal}
-                        title={isLocal ? 'Cannot delete local endpoint' : 'Delete endpoint'}
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                        {status === 'disconnected' && (
+                          <button className="btn-sm btn-warning" onClick={() => handleReconnect(ep)}>
+                            🔗 Reconnect
+                          </button>
+                        )}
+                        <button className="btn-sm" onClick={() => openEdit(ep)}>
+                          ✏️ Edit
+                        </button>
+                        <button
+                          className="btn-danger btn-sm"
+                          onClick={() => setShowDelete(ep)}
+                          disabled={isLocal}
+                          title={isLocal ? 'Cannot delete local endpoint' : 'Delete endpoint'}
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {/* Add Modal */}

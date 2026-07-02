@@ -178,14 +178,16 @@ export default function Images() {
         totalCount={images.length}
       />
 
-      <SortableTable
-        data={tableData}
-        columns={columns}
-        keyField="id"
-        selected={selected}
-        onToggle={toggle}
-        emptyMessage="No images"
-      />
+      <div style={{ overflowX: 'auto' }}>
+        <SortableTable
+          data={tableData}
+          columns={columns}
+          keyField="id"
+          selected={selected}
+          onToggle={toggle}
+          emptyMessage="No images"
+        />
+      </div>
 
       {showPull && (
         <Modal

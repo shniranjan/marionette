@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import Modal from '../components/Modal';
 import Spinner from '../components/Spinner';
+import SortableTable from '../components/SortableTable';
 import { useToast } from '../components/Toast';
 
 export default function Templates() {
@@ -13,6 +14,16 @@ export default function Templates() {
   const [showDelete, setShowDelete] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deploying, setDeploying] = useState({});
+  const [showEdit, setShowEdit] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editImage, setEditImage] = useState('');
+  const [editEnvVars, setEditEnvVars] = useState('{}');
+  const [editPorts, setEditPorts] = useState('[]');
+  const [editVolumes, setEditVolumes] = useState('[]');
+  const [editRestartPolicy, setEditRestartPolicy] = useState('unless-stopped');
+  const [editLabels, setEditLabels] = useState('{}');
+  const [editSaving, setEditSaving] = useState(false);
 
   // New form
   const [newName, setNewName] = useState('');
@@ -110,6 +121,111 @@ export default function Templates() {
     }
   };
 
+  const handleEditClick = (t) => {
+    setEditName(t.name || '');
+    setEditDescription(t.description || '');
+    setEditImage(t.image || '');
+    setEditEnvVars(typeof t.envVars === 'string' ? t.envVars : JSON.stringify(t.envVars || {}));
+    setEditPorts(typeof t.ports === 'string' ? t.ports : JSON.stringify(t.ports || []));
+    setEditVolumes(typeof t.volumes === 'string' ? t.volumes : JSON.stringify(t.volumes || []));
+    setEditRestartPolicy(t.restartPolicy || 'unless-stopped');
+    setEditLabels(typeof t.labels === 'string' ? t.labels : JSON.stringify(t.labels || {}));
+    setShowEdit(t.id);
+  };
+
+  const handleEditSave = async () => {
+    if (!editName.trim() || !editImage.trim()) return;
+    setEditSaving(true);
+    try {
+      let portsParsed = '[]', envVarsParsed = '{}', volumesParsed = '[]', labelsParsed = '{}';
+      try { portsParsed = JSON.stringify(JSON.parse(editPorts)); } catch {}
+      try { envVarsParsed = JSON.stringify(JSON.parse(editEnvVars)); } catch {}
+      try { volumesParsed = JSON.stringify(JSON.parse(editVolumes)); } catch {}
+      try { labelsParsed = JSON.stringify(JSON.parse(editLabels)); } catch {}
+
+      await api.put(`/api/templates/${showEdit}`, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+        image: editImage.trim(),
+        ports: portsParsed,
+        envVars: envVarsParsed,
+        volumes: volumesParsed,
+        restartPolicy: editRestartPolicy,
+        labels: labelsParsed,
+      });
+      setShowEdit(null);
+      toast.success('Template updated');
+      load();
+    } catch (err) {
+      toast.error(err.message || 'Failed to update template');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const columns = [
+    { key: 'name', label: 'Name', sortable: true },
+    { key: 'image', label: 'Image', sortable: true },
+    { key: 'restartPolicy', label: 'Restart Policy', sortable: true },
+    {
+      key: 'ports',
+      label: 'Ports',
+      sortable: false,
+      render: (ports) => {
+        let list = [];
+        try { list = JSON.parse(ports); } catch {}
+        if (!list || !list.length) return <span className="text-secondary">—</span>;
+        return list.map(p => `${p.hostPort || p.containerPort}:${p.containerPort}`).join(', ');
+      },
+      maxWidth: '160px',
+    },
+    {
+      key: 'envVars',
+      label: 'Env Vars',
+      sortable: false,
+      render: (envVars) => {
+        try { return Object.keys(JSON.parse(envVars)).length; } catch { return 0; }
+      },
+      maxWidth: '80px',
+    },
+    {
+      key: 'createdAt',
+      label: 'Created',
+      sortable: true,
+      render: (v) => v ? new Date(v).toLocaleDateString() : '—',
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      sortable: false,
+      render: (_, row) => (
+        <div className="btn-group" style={{ gap: '4px' }}>
+          <button
+            className="btn-primary"
+            style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+            onClick={(e) => { e.stopPropagation(); handleDeploy(row.id); }}
+            disabled={deploying[row.id]}
+          >
+            {deploying[row.id] ? '…' : '▶ Deploy'}
+          </button>
+          <button
+            style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+            onClick={(e) => { e.stopPropagation(); handleEditClick(row); }}
+          >
+            ✏ Edit
+          </button>
+          <button
+            className="btn-danger"
+            style={{ fontSize: '0.7rem', padding: '2px 8px' }}
+            onClick={(e) => { e.stopPropagation(); setShowDelete(row.id); }}
+          >
+            🗑 Delete
+          </button>
+        </div>
+      ),
+    },
+  ];
+
   if (loading) return <div className="loading-center"><Spinner size="lg" /></div>;
 
   return (
@@ -128,89 +244,14 @@ export default function Templates() {
 
       {error && <div className="text-danger" style={{ marginBottom: '16px' }}>Error: {error}</div>}
 
-      {templates.length === 0 ? (
-        <div className="card text-center text-secondary" style={{ padding: '60px 20px' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '16px' }}>📋</div>
-          <div style={{ fontSize: '1.1rem', marginBottom: '8px' }}>No templates yet</div>
-          <div>Save running container configurations as templates for quick redeployment.</div>
-        </div>
-      ) : (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-          gap: '16px',
-        }}>
-          {templates.map((t) => {
-            let portsList = [];
-            let envKeys = [];
-            try { portsList = JSON.parse(t.ports); } catch {}
-            try { envKeys = Object.keys(JSON.parse(t.envVars)); } catch {}
-
-            return (
-              <div key={t.id} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
-                <div style={{ marginBottom: '12px' }}>
-                  <h3 style={{ margin: '0 0 4px 0', fontSize: '1.05rem' }}>{t.name}</h3>
-                  {t.description && (
-                    <div className="text-secondary" style={{ fontSize: '0.8rem', marginBottom: '8px' }}>
-                      {t.description}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '0.75rem' }}>
-                    <span className="badge" style={{ background: 'var(--bg-tertiary)', padding: '2px 8px', borderRadius: '4px' }}>
-                      🖼 {t.image}
-                    </span>
-                    <span className="badge" style={{ background: 'var(--bg-tertiary)', padding: '2px 8px', borderRadius: '4px' }}>
-                      🔄 {t.restartPolicy}
-                    </span>
-                  </div>
-                </div>
-
-                <div style={{ flex: 1, fontSize: '0.8rem', marginBottom: '12px' }}>
-                  {portsList.length > 0 && (
-                    <div style={{ marginBottom: '4px' }}>
-                      <span className="text-secondary">Ports: </span>
-                      {portsList.map((p, i) => (
-                        <code key={i} style={{ marginRight: '4px' }}>
-                          {p.hostPort}:{p.containerPort}
-                        </code>
-                      ))}
-                    </div>
-                  )}
-                  {envKeys.length > 0 && (
-                    <div>
-                      <span className="text-secondary">Env: </span>
-                      {envKeys.slice(0, 5).join(', ')}
-                      {envKeys.length > 5 && ` +${envKeys.length - 5} more`}
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-secondary" style={{ fontSize: '0.7rem', marginBottom: '12px' }}>
-                  Created {new Date(t.createdAt).toLocaleDateString()}
-                </div>
-
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    className="btn btn-primary"
-                    style={{ flex: 1, fontSize: '0.8rem' }}
-                    onClick={() => handleDeploy(t.id)}
-                    disabled={deploying[t.id]}
-                  >
-                    {deploying[t.id] ? 'Deploying...' : '▶ Deploy'}
-                  </button>
-                  <button
-                    className="btn btn-danger"
-                    style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                    onClick={() => setShowDelete(t.id)}
-                  >
-                    🗑
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <div style={{ overflowX: 'auto' }}>
+        <SortableTable
+          data={templates}
+          columns={columns}
+          keyField="id"
+          emptyMessage="No templates yet"
+        />
+      </div>
 
       {/* New Template Modal */}
       {showNew && (
@@ -271,6 +312,58 @@ export default function Templates() {
           <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
             <button className="btn btn-danger" onClick={() => handleDelete(showDelete)}>Delete</button>
             <button className="btn" onClick={() => setShowDelete(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit Template Modal */}
+      {showEdit && (
+        <Modal title="Edit Template" onClose={() => setShowEdit(null)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Name *</label>
+              <input className="input" value={editName} onChange={e => setEditName(e.target.value)} placeholder="my-template" />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Description</label>
+              <input className="input" value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="Optional description" />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Image *</label>
+              <input className="input" value={editImage} onChange={e => setEditImage(e.target.value)} placeholder="nginx:latest" />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Ports (JSON)</label>
+              <textarea className="input" rows={3} value={editPorts} onChange={e => setEditPorts(e.target.value)}
+                placeholder='[{"containerPort":80,"hostPort":8080}]' style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Env Vars (JSON)</label>
+              <textarea className="input" rows={3} value={editEnvVars} onChange={e => setEditEnvVars(e.target.value)}
+                placeholder='{"KEY":"value"}' style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Volumes (JSON)</label>
+              <textarea className="input" rows={3} value={editVolumes} onChange={e => setEditVolumes(e.target.value)}
+                placeholder='[{"source":"/host/path","destination":"/container/path","mode":"rw"}]' style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Restart Policy</label>
+              <select className="input" value={editRestartPolicy} onChange={e => setEditRestartPolicy(e.target.value)}>
+                <option value="unless-stopped">unless-stopped</option>
+                <option value="always">always</option>
+                <option value="on-failure">on-failure</option>
+                <option value="no">no</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Labels (JSON)</label>
+              <textarea className="input" rows={2} value={editLabels} onChange={e => setEditLabels(e.target.value)}
+                placeholder='{"key":"value"}' style={{ fontFamily: 'monospace', fontSize: '0.8rem' }} />
+            </div>
+            <button className="btn btn-primary" onClick={handleEditSave} disabled={editSaving}>
+              {editSaving ? 'Saving...' : 'Save Changes'}
+            </button>
           </div>
         </Modal>
       )}
