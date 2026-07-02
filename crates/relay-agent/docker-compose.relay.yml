@@ -1,8 +1,6 @@
 # relay-agent — Marionette sidecar for Docker host operations
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.relay.yml up -d
-# Or standalone:
-#   docker compose -f docker-compose.relay.yml up -d
 
 services:
   relay-agent:
@@ -10,15 +8,15 @@ services:
     container_name: relay-agent
     restart: unless-stopped
     networks:
-      - marionette-net
+      - marionette_marionette-net
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/niranjan/dockerComposer:/stacks:ro
     environment:
       RUST_LOG: info
       MARIONETTE_URL: ws://marionette:9119/relay
-      # RELAY_TOKEN: "your-token-here"  # uncomment when token auth is enabled
+      # RELAY_TOKEN: "your-token-here"
 
 networks:
-  marionette-net:
+  marionette_marionette-net:
     external: true
