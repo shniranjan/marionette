@@ -4,7 +4,65 @@ use crate::handlers;
 use crate::signed::SignedMessage;
 use futures_util::{SinkExt, StreamExt};
 use relay_protocol::{Message, MessageType};
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMsg};
+use tokio_tungstenite::tungstenite::Message as WsMsg;
+
+/// Accept any TLS certificate (self-signed cert on homelab gateway).
+#[derive(Debug)]
+struct AcceptAllVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for AcceptAllVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
+
+fn make_wss_connector() -> tokio_tungstenite::Connector {
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAllVerifier))
+        .with_no_client_auth();
+    tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config))
+}
 
 pub async fn connect_loop(cfg: Config) -> anyhow::Result<()> {
     loop {
@@ -20,7 +78,20 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
     let url = &cfg.relay.marionette_url;
     tracing::info!(%url, "connecting to marionette");
 
-    let (ws_stream, _response) = connect_async(url).await?;
+    let (ws_stream, _response) = if url.starts_with("wss://") {
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(url.as_str())
+            .body(())?;
+        tokio_tungstenite::connect_async_tls_with_config(
+            request,
+            None,
+            false,
+            Some(make_wss_connector()),
+        )
+        .await?
+    } else {
+        tokio_tungstenite::connect_async(url).await?
+    };
     let (mut write, mut read) = ws_stream.split();
 
     tracing::info!("connected");
@@ -66,7 +137,6 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
     let mut heartbeat = tokio::time::interval(
         std::time::Duration::from_secs(cfg.relay.heartbeat_interval_secs),
     );
-    // Skip the first immediate tick
     heartbeat.tick().await;
 
     loop {
@@ -76,7 +146,6 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                     Some(Ok(WsMsg::Text(text))) => {
                         match serde_json::from_str::<SignedMessage>(&text) {
                             Ok(signed) => {
-                                // Verify signature if we're authenticated
                                 if auth.is_authenticated() {
                                     match &signed.signature {
                                         Some(sig) => {
@@ -101,7 +170,6 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                                     }
                                 }
 
-                                // Intercept register_ok to extract session key
                                 if signed.message.msg_type == MessageType::Response
                                     && signed.message.subtype == "register_ok"
                                 {
@@ -128,7 +196,6 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                                     continue;
                                 }
 
-                                // Also intercept error during registration
                                 if !auth.is_authenticated()
                                     && signed.message.msg_type == MessageType::Response
                                     && signed.message.subtype == "error"
@@ -141,7 +208,6 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                                     return Err(anyhow::anyhow!("Registration failed: {}", err_msg));
                                 }
 
-                                // Dispatch to handlers
                                 let response = handlers::dispatch(signed.message).await;
                                 if let Some(resp) = response {
                                     let canonical = serde_json::to_string(&resp)?;
@@ -164,20 +230,14 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                         tracing::info!("server closed connection");
                         return Ok(());
                     }
-                    Some(Ok(_other)) => {
-                        // Binary, Ping, Pong, Frame — silently ignore for now
-                    }
+                    Some(Ok(_other)) => {}
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
                 }
             }
             _ = heartbeat.tick() => {
                 let hb_id = format!("hb-{}", uuid::Uuid::new_v4());
-                let ping = Message::new_request(
-                    &hb_id,
-                    "ping",
-                    serde_json::json!({}),
-                );
+                let ping = Message::new_request(&hb_id, "ping", serde_json::json!({}));
                 let signed_ping = SignedMessage::unsigned(ping);
                 let json = serde_json::to_string(&signed_ping).unwrap_or_default();
                 if write.send(WsMsg::Text(json.into())).await.is_err() {
