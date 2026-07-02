@@ -13,9 +13,13 @@ use crate::relay::signed::SignedMessage;
 /// Pending relay requests awaiting response.
 pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Message>>>>;
 
-/// Channel for sending commands to the relay handler.
-pub static RELAY_TX: std::sync::OnceLock<mpsc::UnboundedSender<RelayCommand>> =
+/// Channel for sending commands to the relay handler — replaced on each reconnect.
+static RELAY_TX: std::sync::OnceLock<Mutex<Option<mpsc::UnboundedSender<RelayCommand>>>> =
     std::sync::OnceLock::new();
+
+fn relay_tx() -> &'static Mutex<Option<mpsc::UnboundedSender<RelayCommand>>> {
+    RELAY_TX.get_or_init(|| Mutex::new(None))
+}
 
 pub struct RelayCommand {
     pub message: Message,
@@ -23,13 +27,16 @@ pub struct RelayCommand {
 }
 
 /// Send a command to the connected relay and wait for response.
-/// Returns an error if no relay is connected or the relay doesn't respond.
 pub async fn send_relay_command(msg: Message) -> Result<Message, String> {
     let (response_tx, response_rx) = oneshot::channel();
 
-    let tx = RELAY_TX
-        .get()
-        .ok_or("No relay connected")?;
+    let tx = {
+        let guard = relay_tx().lock().await;
+        guard
+            .as_ref()
+            .ok_or("No relay connected")?
+            .clone()
+    };
 
     tx.send(RelayCommand {
         message: msg,
@@ -58,7 +65,7 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
 
     // Set up command channel for this relay session
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<RelayCommand>();
-    RELAY_TX.set(cmd_tx).ok();
+    *relay_tx().lock().await = Some(cmd_tx);
 
     let sessions = Mutex::new(SessionManager::new());
     let current_session_id = Mutex::new(None::<String>);
@@ -73,7 +80,6 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                 let msg_id = cmd.message.id.clone();
                 pending.lock().await.insert(msg_id, cmd.response_tx);
 
-                // Forward unsigned message to relay
                 let signed = SignedMessage::unsigned(cmd.message);
                 let json = serde_json::to_string(&signed).unwrap();
                 if socket.send(AxumMsg::Text(json.into())).await.is_err() {
@@ -207,5 +213,7 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
         }
     }
 
+    // Clear the command channel on disconnect
+    *relay_tx().lock().await = None;
     tracing::info!("relay disconnected");
 }
