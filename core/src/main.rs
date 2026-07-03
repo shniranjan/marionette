@@ -285,9 +285,15 @@ async fn relay_send_command(
         id
     };
 
+    let hostname = body
+        .get("hostname")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+
     let msg = relay_protocol::Message::new_request(&id, &subtype, payload);
 
-    match crate::ws_relay::send_relay_command(msg).await {
+    match crate::ws_relay::send_relay_command(&hostname, msg).await {
         Ok(resp) => Ok(axum::Json(serde_json::to_value(resp).unwrap())),
         Err(e) => Err((
             axum::http::StatusCode::BAD_GATEWAY,
@@ -296,8 +302,8 @@ async fn relay_send_command(
     }
 }
 
-/// Relay connection status — returns host info if connected.
+/// Relay connection status — returns host info for all connected relays.
 async fn relay_status_handler() -> axum::Json<serde_json::Value> {
-    let info = crate::ws_relay::get_relay_status().await;
-    axum::Json(serde_json::to_value(info).unwrap_or(serde_json::json!({"connected": false})))
+    let all = crate::ws_relay::get_all_relay_status().await;
+    axum::Json(serde_json::to_value(all).unwrap_or(serde_json::json!({})))
 }

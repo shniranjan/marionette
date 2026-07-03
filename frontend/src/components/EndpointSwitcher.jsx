@@ -174,11 +174,11 @@ export default function EndpointSwitcher({ currentEndpoint, onEndpointChange }) 
                   {name.toLowerCase() !== 'local' && (
                     <span style={{
                       width: '6px', height: '6px', borderRadius: '50%',
-                      background: relayStatus?.connected ? 'var(--green)' : 'var(--text-secondary)',
+                      background: Object.keys(relayStatus || {}).length > 0 ? 'var(--green)' : 'var(--text-secondary)',
                       flexShrink: 0,
                       marginLeft: '-3px',
                       marginRight: '2px',
-                      border: relayStatus?.connected ? 'none' : '1px solid var(--border)',
+                      border: Object.keys(relayStatus || {}).length > 0 ? 'none' : '1px solid var(--border)',
                     }} />
                   )}
                   <span style={{ flex: 1, fontWeight: active ? 600 : 400 }}>{name}</span>

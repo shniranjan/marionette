@@ -195,6 +195,58 @@ export default function Endpoints() {
 
       {error && <div className="text-danger mb-16">Error: {error}</div>}
 
+      {/* Relay Status Summary */}
+      <div style={{
+        padding: '10px 16px',
+        marginBottom: '16px',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        flexWrap: 'wrap',
+      }}>
+        <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>🛰️ Relay Status:</span>
+        {Object.keys(relayStatus).length === 0 ? (
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>No relays connected</span>
+        ) : (
+          <>
+            <span style={{
+              width: '8px', height: '8px', borderRadius: '50%',
+              background: Object.values(relayStatus).some(r => r?.connected) ? 'var(--green)' : 'var(--text-secondary)',
+              display: 'inline-block',
+            }} />
+            <span style={{ fontSize: '0.8rem' }}>
+              {Object.values(relayStatus).filter(r => r?.connected).length} / {Object.keys(relayStatus).length} relays connected
+            </span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              {Object.entries(relayStatus).map(([hostname, info]) => (
+                <span key={hostname} style={{
+                  display: 'inline-block',
+                  padding: '2px 8px',
+                  margin: '2px',
+                  borderRadius: '10px',
+                  background: info?.connected ? 'var(--bg-tertiary)' : 'transparent',
+                  border: '1px solid var(--border)',
+                  cursor: 'help',
+                }}
+                title={`Hostname: ${hostname}\nArch: ${info?.arch || '—'}\nOS: ${info?.os || '—'}\nRelay v${info?.relay_version || '—'}\nConnected: ${info?.connected_at || '—'}`}
+                >
+                  <span style={{
+                    width: '6px', height: '6px', borderRadius: '50%',
+                    background: info?.connected ? 'var(--green)' : 'var(--red)',
+                    display: 'inline-block',
+                    marginRight: '4px',
+                  }} />
+                  {hostname}
+                </span>
+              ))}
+            </span>
+          </>
+        )}
+      </div>
+
       {endpoints.length === 0 ? (
         <div className="text-secondary" style={{ padding: '24px', textAlign: 'center' }}>
           No remote endpoints configured. All operations run on the local Docker host.
@@ -207,7 +259,6 @@ export default function Endpoints() {
                 <th>Name</th>
                 <th>Connection</th>
                 <th>Status</th>
-                <th>Relay</th>
                 <th>Containers</th>
                 <th>Tags</th>
                 <th>Actions</th>
@@ -252,28 +303,6 @@ export default function Endpoints() {
                           </span>
                         )}
                       </div>
-                    </td>
-                    <td>
-                      {isLocal ? (
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>—</span>
-                      ) : (
-                        <span
-                          title={relayStatus?.connected
-                            ? `Hostname: ${relayStatus.hostname || '\u2014'}\nDocker: ${relayStatus.docker_version || '\u2014'}\nUptime: ${relayStatus.uptime || '\u2014'}`
-                            : 'No relay connection'}
-                          style={{ cursor: 'help' }}
-                        >
-                          <span style={{
-                            width: '8px', height: '8px', borderRadius: '50%',
-                            background: relayStatus?.connected ? 'var(--green)' : 'var(--text-secondary)',
-                            display: 'inline-block',
-                            marginRight: '6px',
-                          }} />
-                          <span style={{ fontSize: '0.8rem' }}>
-                            {relayStatus?.connected ? 'Connected' : '\u2014'}
-                          </span>
-                        </span>
-                      )}
                     </td>
                     <td>{containers}</td>
                     <td>

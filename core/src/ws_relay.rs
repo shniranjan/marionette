@@ -15,12 +15,18 @@ use crate::relay::signed::SignedMessage;
 /// Pending relay requests awaiting response.
 pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Message>>>>;
 
-/// Channel for sending commands to the relay handler — replaced on each reconnect.
-static RELAY_TX: std::sync::OnceLock<Mutex<Option<mpsc::UnboundedSender<RelayCommand>>>> =
+/// State for a single connected relay.
+struct RelayState {
+    cmd_tx: mpsc::UnboundedSender<RelayCommand>,
+    info: RelayInfo,
+}
+
+/// Multi-relay registry: hostname → RelayState.
+static RELAYS: std::sync::OnceLock<Mutex<HashMap<String, RelayState>>> =
     std::sync::OnceLock::new();
 
-fn relay_tx() -> &'static Mutex<Option<mpsc::UnboundedSender<RelayCommand>>> {
-    RELAY_TX.get_or_init(|| Mutex::new(None))
+fn relays() -> &'static Mutex<HashMap<String, RelayState>> {
+    RELAYS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub struct RelayCommand {
@@ -40,56 +46,40 @@ pub struct RelayInfo {
     pub connected_at: String,
 }
 
-/// Stores relay host info populated during registration, cleared on disconnect.
-static RELAY_INFO: std::sync::OnceLock<Mutex<Option<RelayInfo>>> =
-    std::sync::OnceLock::new();
-
-fn relay_info() -> &'static Mutex<Option<RelayInfo>> {
-    RELAY_INFO.get_or_init(|| Mutex::new(None))
-}
-
-/// Return current relay connection status.
-pub async fn get_relay_status() -> RelayInfo {
-    relay_info()
+/// Return status for all connected relays.
+pub async fn get_all_relay_status() -> HashMap<String, RelayInfo> {
+    relays()
         .lock()
         .await
-        .clone()
-        .unwrap_or(RelayInfo {
-            connected: false,
-            hostname: String::new(),
-            docker_version: String::new(),
-            arch: String::new(),
-            os: String::new(),
-            relay_version: String::new(),
-            connected_at: String::new(),
-        })
+        .iter()
+        .map(|(hostname, state)| (hostname.clone(), state.info.clone()))
+        .collect()
 }
 
-/// Send a command to the connected relay and wait for response.
-pub async fn send_relay_command(msg: Message) -> Result<Message, String> {
+/// Send a command to the relay identified by hostname and wait for response.
+pub async fn send_relay_command(hostname: &str, msg: Message) -> Result<Message, String> {
     let (response_tx, response_rx) = oneshot::channel();
 
-    let tx = {
-        let guard = relay_tx().lock().await;
+    let cmd_tx = {
+        let guard = relays().lock().await;
         guard
-            .as_ref()
-            .ok_or("No relay connected")?
+            .get(hostname)
+            .ok_or_else(|| format!("No relay connected with hostname: {}", hostname))?
+            .cmd_tx
             .clone()
     };
 
-    tx.send(RelayCommand {
-        message: msg,
-        response_tx,
-    })
-    .map_err(|_| "Relay disconnected while sending command".to_string())?;
+    cmd_tx
+        .send(RelayCommand {
+            message: msg,
+            response_tx,
+        })
+        .map_err(|_| "Relay disconnected while sending command".to_string())?;
 
-    tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        response_rx,
-    )
-    .await
-    .map_err(|_| "Relay response timeout".to_string())?
-    .map_err(|_| "Relay dropped response channel".to_string())
+    tokio::time::timeout(std::time::Duration::from_secs(30), response_rx)
+        .await
+        .map_err(|_| "Relay response timeout".to_string())?
+        .map_err(|_| "Relay dropped response channel".to_string())
 }
 
 pub async fn relay_handler(
@@ -104,13 +94,15 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
 
     // Set up command channel for this relay session
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<RelayCommand>();
-    *relay_tx().lock().await = Some(cmd_tx);
 
     let sessions = Mutex::new(SessionManager::new());
     let current_session_id = Mutex::new(None::<String>);
 
     // Pending map for request-response matching
     let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+
+    // Track whether we've registered this relay in the RELAYS map
+    let mut registered_hostname: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -187,18 +179,31 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
 
-                            // Capture host_info from the register payload
+                            // Capture host_info from the register payload and register in RELAYS
                             if let Some(hi) = msg.payload.get("host_info") {
+                                let hostname = hi.get("hostname")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+
                                 let info = RelayInfo {
                                     connected: true,
-                                    hostname: hi.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    hostname: hostname.clone(),
                                     docker_version: hi.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     arch: hi.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     connected_at: Utc::now().to_rfc3339(),
                                 };
-                                *relay_info().lock().await = Some(info);
+
+                                if !hostname.is_empty() {
+                                    let state = RelayState {
+                                        cmd_tx: cmd_tx.clone(),
+                                        info: info,
+                                    };
+                                    relays().lock().await.insert(hostname.clone(), state);
+                                    registered_hostname = Some(hostname);
+                                }
                             }
 
                             match auth::validate_registration_token(state.registry.db(), token) {
@@ -226,23 +231,33 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                 }
                             }
                         } else if msg.subtype == "ping" {
-                            // Capture host_info from first ping if not yet set
-                            {
-                                let mut info_guard = relay_info().lock().await;
-                                if info_guard.is_none() {
-                                    let hi = &msg.payload;
+                            // Capture host_info from ping and register in RELAYS if not yet registered
+                            if registered_hostname.is_none() {
+                                let hostname = msg.payload.get("hostname")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+
+                                if !hostname.is_empty() {
                                     let info = RelayInfo {
                                         connected: true,
-                                        hostname: hi.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        docker_version: hi.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        arch: hi.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        hostname: hostname.clone(),
+                                        docker_version: msg.payload.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        arch: msg.payload.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        os: msg.payload.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        relay_version: msg.payload.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         connected_at: Utc::now().to_rfc3339(),
                                     };
-                                    *info_guard = Some(info);
+
+                                    let state = RelayState {
+                                        cmd_tx: cmd_tx.clone(),
+                                        info,
+                                    };
+                                    relays().lock().await.insert(hostname.clone(), state);
+                                    registered_hostname = Some(hostname);
                                 }
                             }
+
                             ("pong", serde_json::to_value(PongResponse {
                                 uptime_secs: 0,
                                 docker_version: "26.1.3".into(),
@@ -283,8 +298,11 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
         }
     }
 
-    // Clear the command channel and relay info on disconnect
-    *relay_tx().lock().await = None;
-    *relay_info().lock().await = None;
-    tracing::info!("relay disconnected");
+    // Remove this relay from the registry on disconnect
+    if let Some(hostname) = registered_hostname {
+        relays().lock().await.remove(&hostname);
+        tracing::info!(%hostname, "relay disconnected");
+    } else {
+        tracing::info!("relay disconnected (was not registered)");
+    }
 }

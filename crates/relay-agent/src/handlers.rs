@@ -10,8 +10,17 @@ pub fn docker_client() -> &'static Docker {
         let host = std::env::var("DOCKER_HOST")
             .unwrap_or_else(|_| "unix:///var/run/docker.sock".into());
         tracing::info!(%host, "connecting to Docker");
-        Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
-            .expect(&format!("failed to connect to Docker at {}", host))
+
+        // bollard's connect_with_http only supports http:// and https:// URLs.
+        // For unix:// sockets we must use connect_with_unix instead.
+        if let Some(path) = host.strip_prefix("unix://") {
+            tracing::info!(%path, "using Unix socket connection");
+            Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION)
+                .expect(&format!("failed to connect to Docker at {}", host))
+        } else {
+            Docker::connect_with_http(&host, 120, bollard::API_DEFAULT_VERSION)
+                .expect(&format!("failed to connect to Docker at {}", host))
+        }
     })
 }
 
