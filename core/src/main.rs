@@ -103,6 +103,7 @@ async fn main() {
         // Relay WebSocket
         .route("/relay", get(ws_relay::relay_handler))
         .route("/relay/send", post(relay_send_command))
+        .route("/relay/status", get(relay_status_handler))
         // Containers
         .route("/containers", get(routes::containers::list_containers))
         .route("/containers/{id}", get(routes::containers::inspect_container))
@@ -293,4 +294,10 @@ async fn relay_send_command(
             axum::Json(serde_json::json!({"error": e})),
         )),
     }
+}
+
+/// Relay connection status — returns host info if connected.
+async fn relay_status_handler() -> axum::Json<serde_json::Value> {
+    let info = crate::ws_relay::get_relay_status().await;
+    axum::Json(serde_json::to_value(info).unwrap_or(serde_json::json!({"connected": false})))
 }

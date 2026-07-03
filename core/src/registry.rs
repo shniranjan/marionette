@@ -155,9 +155,9 @@ impl EndpointRegistry {
 
     /// Create a new endpoint: validate, persist, cache client.
     pub async fn create(&self, ep: DockerEndpoint) -> Result<DockerEndpoint, String> {
-        // Check for duplicate name
+        // Check for duplicate name (case-insensitive)
         let existing = self.list().await;
-        if existing.iter().any(|e| e.name == ep.name) {
+        if existing.iter().any(|e| e.name.to_lowercase() == ep.name.to_lowercase()) {
             return Err(format!("Endpoint '{}' already exists", ep.name));
         }
 
@@ -240,7 +240,7 @@ impl EndpointRegistry {
             .await
             .ok_or_else(|| format!("Endpoint '{}' not found", id))?;
 
-        if ep.name == "local" {
+        if ep.name.to_lowercase() == "local" {
             return Err("Cannot delete the default 'local' endpoint".to_string());
         }
 

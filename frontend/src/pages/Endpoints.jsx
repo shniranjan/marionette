@@ -33,6 +33,7 @@ export default function Endpoints() {
   const [testing, setTesting] = useState({});
   const [testResults, setTestResults] = useState({});
   const [saving, setSaving] = useState(false);
+  const [relayStatus, setRelayStatus] = useState({});
 
   // Add form
   const [newName, setNewName] = useState('');
@@ -61,6 +62,13 @@ export default function Endpoints() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load relay agent status
+  useEffect(() => {
+    api.get('/api/relay/status')
+      .then(data => setRelayStatus(data || {}))
+      .catch(() => setRelayStatus({}));
+  }, []);
 
   // Reload when endpoint changes (EndpointSwitcher dispatches 'endpoint:changed')
   useEffect(() => {
@@ -199,6 +207,7 @@ export default function Endpoints() {
                 <th>Name</th>
                 <th>Connection</th>
                 <th>Status</th>
+                <th>Relay</th>
                 <th>Containers</th>
                 <th>Tags</th>
                 <th>Actions</th>
@@ -243,6 +252,28 @@ export default function Endpoints() {
                           </span>
                         )}
                       </div>
+                    </td>
+                    <td>
+                      {isLocal ? (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>—</span>
+                      ) : (
+                        <span
+                          title={relayStatus?.connected
+                            ? `Hostname: ${relayStatus.hostname || '\u2014'}\nDocker: ${relayStatus.docker_version || '\u2014'}\nUptime: ${relayStatus.uptime || '\u2014'}`
+                            : 'No relay connection'}
+                          style={{ cursor: 'help' }}
+                        >
+                          <span style={{
+                            width: '8px', height: '8px', borderRadius: '50%',
+                            background: relayStatus?.connected ? 'var(--green)' : 'var(--text-secondary)',
+                            display: 'inline-block',
+                            marginRight: '6px',
+                          }} />
+                          <span style={{ fontSize: '0.8rem' }}>
+                            {relayStatus?.connected ? 'Connected' : '\u2014'}
+                          </span>
+                        </span>
+                      )}
                     </td>
                     <td>{containers}</td>
                     <td>

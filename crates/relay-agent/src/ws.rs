@@ -125,8 +125,18 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
         tracing::info!("no relay token configured, operating unauthenticated");
     }
 
-    // ── Send initial ping to verify connectivity ──────────────────
-    let ping = Message::new_request("ping-001", "ping", serde_json::json!({}));
+    // ── Send initial ping with host_info ────────────────────
+    let host_info = serde_json::json!({
+        "hostname": hostname::get()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        "relay_version": env!("CARGO_PKG_VERSION"),
+        "docker_version": "unknown",
+        "arch": std::env::consts::ARCH,
+        "os": std::env::consts::OS,
+    });
+    let ping = Message::new_request("ping-001", "ping", host_info);
     let signed_ping = SignedMessage::unsigned(ping);
     let json = serde_json::to_string(&signed_ping)?;
     write.send(WsMsg::Text(json.into())).await?;

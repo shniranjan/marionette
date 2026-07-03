@@ -1,7 +1,9 @@
 use axum::extract::ws::{Message as AxumMsg, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use chrono::Utc;
 use relay_protocol::payloads::PongResponse;
 use relay_protocol::Message;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -24,6 +26,43 @@ fn relay_tx() -> &'static Mutex<Option<mpsc::UnboundedSender<RelayCommand>>> {
 pub struct RelayCommand {
     pub message: Message,
     pub response_tx: oneshot::Sender<Message>,
+}
+
+/// Relay connection status and host information.
+#[derive(Debug, Clone, Serialize)]
+pub struct RelayInfo {
+    pub connected: bool,
+    pub hostname: String,
+    pub docker_version: String,
+    pub arch: String,
+    pub os: String,
+    pub relay_version: String,
+    pub connected_at: String,
+}
+
+/// Stores relay host info populated during registration, cleared on disconnect.
+static RELAY_INFO: std::sync::OnceLock<Mutex<Option<RelayInfo>>> =
+    std::sync::OnceLock::new();
+
+fn relay_info() -> &'static Mutex<Option<RelayInfo>> {
+    RELAY_INFO.get_or_init(|| Mutex::new(None))
+}
+
+/// Return current relay connection status.
+pub async fn get_relay_status() -> RelayInfo {
+    relay_info()
+        .lock()
+        .await
+        .clone()
+        .unwrap_or(RelayInfo {
+            connected: false,
+            hostname: String::new(),
+            docker_version: String::new(),
+            arch: String::new(),
+            os: String::new(),
+            relay_version: String::new(),
+            connected_at: String::new(),
+        })
 }
 
 /// Send a command to the connected relay and wait for response.
@@ -148,6 +187,20 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
 
+                            // Capture host_info from the register payload
+                            if let Some(hi) = msg.payload.get("host_info") {
+                                let info = RelayInfo {
+                                    connected: true,
+                                    hostname: hi.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    docker_version: hi.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    arch: hi.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                    connected_at: Utc::now().to_rfc3339(),
+                                };
+                                *relay_info().lock().await = Some(info);
+                            }
+
                             match auth::validate_registration_token(state.registry.db(), token) {
                                 Ok(endpoint_id) => {
                                     let session_id = uuid::Uuid::new_v4().to_string();
@@ -173,6 +226,23 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                 }
                             }
                         } else if msg.subtype == "ping" {
+                            // Capture host_info from first ping if not yet set
+                            {
+                                let mut info_guard = relay_info().lock().await;
+                                if info_guard.is_none() {
+                                    let hi = &msg.payload;
+                                    let info = RelayInfo {
+                                        connected: true,
+                                        hostname: hi.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        docker_version: hi.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        arch: hi.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                        connected_at: Utc::now().to_rfc3339(),
+                                    };
+                                    *info_guard = Some(info);
+                                }
+                            }
                             ("pong", serde_json::to_value(PongResponse {
                                 uptime_secs: 0,
                                 docker_version: "26.1.3".into(),
@@ -213,7 +283,8 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
         }
     }
 
-    // Clear the command channel on disconnect
+    // Clear the command channel and relay info on disconnect
     *relay_tx().lock().await = None;
+    *relay_info().lock().await = None;
     tracing::info!("relay disconnected");
 }

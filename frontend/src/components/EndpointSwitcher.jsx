@@ -24,6 +24,7 @@ export default function EndpointSwitcher({ currentEndpoint, onEndpointChange }) 
   const [endpoints, setEndpoints] = useState([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [relayStatus, setRelayStatus] = useState({});
 
   const load = useCallback(async () => {
     try {
@@ -35,6 +36,13 @@ export default function EndpointSwitcher({ currentEndpoint, onEndpointChange }) 
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load relay agent status
+  useEffect(() => {
+    api.get('/api/relay/status')
+      .then(data => setRelayStatus(data || {}))
+      .catch(() => setRelayStatus({}));
+  }, []);
 
   useEffect(() => {
     const handler = () => load();
@@ -132,7 +140,12 @@ export default function EndpointSwitcher({ currentEndpoint, onEndpointChange }) 
               <span style={{ fontWeight: currentEndpoint === 'local' ? 600 : 400 }}>Local</span>
             </div>
 
-            {endpoints.map((ep) => {
+            {endpoints.filter(ep => {
+              const id = (ep.id || ep.Id || '').toLowerCase();
+              const name = (ep.name || ep.Name || '').toLowerCase();
+              // Filter out the local endpoint — it's already shown as the hardcoded "Local" entry above
+              return id !== 'local' && name !== 'local';
+            }).map((ep) => {
               const id = ep.id || ep.Id;
               const name = ep.name || ep.Name || id;
               const s = (ep.status || ep.Status || '').toLowerCase();
@@ -158,6 +171,16 @@ export default function EndpointSwitcher({ currentEndpoint, onEndpointChange }) 
                     background: statusColor(s),
                     flexShrink: 0,
                   }} />
+                  {name.toLowerCase() !== 'local' && (
+                    <span style={{
+                      width: '6px', height: '6px', borderRadius: '50%',
+                      background: relayStatus?.connected ? 'var(--green)' : 'var(--text-secondary)',
+                      flexShrink: 0,
+                      marginLeft: '-3px',
+                      marginRight: '2px',
+                      border: relayStatus?.connected ? 'none' : '1px solid var(--border)',
+                    }} />
+                  )}
                   <span style={{ flex: 1, fontWeight: active ? 600 : 400 }}>{name}</span>
                   <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
                     {containers} 📦
