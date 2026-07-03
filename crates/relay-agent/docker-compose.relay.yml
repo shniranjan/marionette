@@ -7,19 +7,12 @@ services:
     image: relay-agent:latest
     container_name: relay-agent
     restart: unless-stopped
-    networks:
-      - marionette_marionette-net
-      - hermesagent_default
+    network_mode: host
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /home/niranjan/dockerComposer:/stacks:ro
     environment:
       RUST_LOG: info
-      MARIONETTE_URL: wss://marionette:8443/api/relay
-      DOCKER_HOST: http://socket-proxy:2375
+      MARIONETTE_URL: wss://192.168.1.59:8443/api/relay
+      DOCKER_HOST: unix:///var/run/docker.sock
       # RELAY_TOKEN: "your-token-here"
-
-networks:
-  marionette_marionette-net:
-    external: true
-  hermesagent_default:
-    external: true
