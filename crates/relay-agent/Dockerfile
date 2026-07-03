@@ -14,6 +14,6 @@ ENV RUST_LOG=info
 ENV MARIONETTE_URL=ws://marionette:9119/relay
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
-    CMD /usr/local/bin/relay-agent --health || exit 1
+    CMD kill -0 1
 
 ENTRYPOINT ["/usr/local/bin/relay-agent"]

@@ -1063,6 +1063,7 @@ dependencies = [
  "relay-protocol",
  "reqwest",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1416,6 +1417,8 @@ name = "relay-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bollard",
+ "chrono",
  "futures-util",
  "hex",
  "hmac",
