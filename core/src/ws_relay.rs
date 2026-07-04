@@ -182,15 +182,16 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
             // Command from API → forward to relay
             Some(cmd) = cmd_rx.recv() => {
                 let msg_id = cmd.message.id.clone();
-                tracing::info!(msg_id = %msg_id, subtype = %cmd.message.subtype, "RELAY LOOP: received command from API");
+                let subtype = cmd.message.subtype.clone();
+                tracing::info!(msg_id = %msg_id, subtype = %subtype, "RELAY LOOP: received command from API");
                 if let Some(stream_tx) = cmd.stream_tx {
                     // Streaming mode: insert the caller's mpsc sender directly
                     // so all events AND the final response flow to the caller.
-                    pending.lock().await.insert(msg_id, stream_tx);
+                    pending.lock().await.insert(msg_id.clone(), stream_tx);
                 } else {
                     // Non-streaming mode: drain events, forward only final Response
                     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-                    pending.lock().await.insert(msg_id, tx);
+                    pending.lock().await.insert(msg_id.clone(), tx);
                     let response_tx = cmd.response_tx;
                     tokio::spawn(async move {
                         while let Some(msg) = rx.recv().await {
