@@ -367,16 +367,13 @@ pub async fn stop_stack(
 async fn stop_stack_via_relay(relay_host: &str, name: &str) -> ApiResult<serde_json::Value> {
     use relay_protocol::Message;
 
-    // Relay agent has compose.down but not compose.stop.
-    // Use compose.down without --volumes to preserve data.
     let msg = Message::new_request(
         Uuid::new_v4().to_string(),
-        "compose.down",
+        "compose.stop",
         serde_json::json!({
             "project_dir": format!("/stacks/{}", name),
             "project_name": name,
             "file": format!("/stacks/{}/docker-compose.yml", name),
-            "volumes": false,
         }),
     );
 

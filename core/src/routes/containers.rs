@@ -11,6 +11,7 @@ use bollard::container::{
 use bollard::models::PortBinding;
 use std::collections::HashMap;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::helpers;
 use crate::models::*;
@@ -22,10 +23,212 @@ fn error(code: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
     (code, Json(serde_json::json!({"error": msg})))
 }
 
+// ── Relay helper ──────────────────────────────────────────────
+
+/// Check if a request should be routed through the relay, and return the
+/// relay hostname if so.
+async fn resolve_endpoint(endpoint: &Option<String>) -> Option<String> {
+    if let Some(ref ep_id) = endpoint {
+        if ep_id != "local" {
+            return crate::ws_relay::get_relay_for_endpoint(ep_id).await;
+        }
+    }
+    None
+}
+
 fn extract_stack(labels: &HashMap<String, String>) -> Option<String> {
     labels
         .get("com.docker.compose.project")
         .cloned()
+}
+
+// ── Relay handler functions ───────────────────────────────────
+
+async fn list_containers_via_relay(
+    relay_host: &str,
+    include_health: bool,
+) -> ApiResult<Vec<ContainerSummary>> {
+    use relay_protocol::Message;
+
+    let msg = Message::new_request(
+        Uuid::new_v4().to_string(),
+        "docker.ps",
+        serde_json::json!({"all": true}),
+    );
+
+    let response = crate::ws_relay::send_relay_command(relay_host, msg)
+        .await
+        .map_err(|e| error(StatusCode::BAD_GATEWAY, &format!("Relay error: {}", e)))?;
+
+    let containers = response
+        .payload
+        .get("containers")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut summaries: Vec<ContainerSummary> = containers
+        .into_iter()
+        .map(|c| {
+            let name = c
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let labels = c
+                .get("labels")
+                .and_then(|v| v.as_object())
+                .map(|obj| {
+                    obj.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                        .collect::<HashMap<String, String>>()
+                })
+                .unwrap_or_default();
+
+            ContainerSummary {
+                id: c
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                name,
+                image: c
+                    .get("image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                state: c
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                status: c
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                created: c.get("created").and_then(|v| v.as_i64()).unwrap_or(0),
+                ports: vec![], // relay doesn't return detailed port info
+                stack: extract_stack(&labels),
+                health: None,
+                labels: Some(labels),
+            }
+        })
+        .collect();
+
+    // Parallel health inspection when requested — skip for relay path
+    if include_health && !summaries.is_empty() {
+        for summary in &mut summaries {
+            if let Ok(inspect_resp) =
+                inspect_container_via_relay_raw(relay_host, &summary.id).await
+            {
+                if let Some(state) = inspect_resp.get("state") {
+                    if let Some(health_status) = state.get("health").and_then(|v| v.as_str()) {
+                        summary.health = Some(health_status.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(summaries))
+}
+
+async fn inspect_container_via_relay_raw(
+    relay_host: &str,
+    container_id: &str,
+) -> Result<serde_json::Value, String> {
+    use relay_protocol::Message;
+
+    let msg = Message::new_request(
+        Uuid::new_v4().to_string(),
+        "docker.inspect",
+        serde_json::json!({"id": container_id}),
+    );
+
+    let response = crate::ws_relay::send_relay_command(relay_host, msg).await?;
+    Ok(response.payload)
+}
+
+async fn inspect_container_via_relay(
+    relay_host: &str,
+    id: &str,
+) -> ApiResult<ContainerDetail> {
+    let info = inspect_container_via_relay_raw(relay_host, id)
+        .await
+        .map_err(|e| error(StatusCode::BAD_GATEWAY, &format!("Relay error: {}", e)))?;
+
+    let detail = ContainerDetail {
+        id: info
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        name: info
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .trim_start_matches('/')
+            .to_string(),
+        image: info
+            .get("image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        state: info
+            .get("state")
+            .and_then(|v| v.as_object())
+            .and_then(|s| s.get("status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        status: info
+            .get("state")
+            .and_then(|v| v.as_object())
+            .and_then(|s| s.get("status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        created: info.get("created").and_then(|v| v.as_i64()).unwrap_or(0).to_string(),
+        platform: None,
+        command: None,
+        env: vec![],
+        ports: vec![],
+        mounts: vec![],
+        networks: vec![],
+        restart_policy: None,
+        labels: HashMap::new(),
+        stack: None,
+    };
+
+    Ok(Json(detail))
+}
+
+async fn container_action_via_relay(
+    relay_host: &str,
+    action: &str,
+    container_id: &str,
+) -> ApiResult<serde_json::Value> {
+    use relay_protocol::Message;
+
+    let msg = Message::new_request(
+        Uuid::new_v4().to_string(),
+        action,
+        serde_json::json!({"container": container_id}),
+    );
+
+    let _response = crate::ws_relay::send_relay_command(relay_host, msg)
+        .await
+        .map_err(|e| error(StatusCode::BAD_GATEWAY, &format!("Relay error: {}", e)))?;
+
+    let status_verb = match action {
+        "docker.start" => "started",
+        "docker.stop" => "stopped",
+        "docker.restart" => "restarted",
+        _ => action,
+    };
+
+    Ok(Json(serde_json::json!({"status": status_verb, "id": container_id})))
 }
 
 /// Map bollard 0.17 list_containers ports (Option<Vec<Port>>) to our PortMapping.
@@ -105,6 +308,11 @@ pub async fn list_containers(
     State(state): State<Arc<crate::AppState>>,
     Query(params): Query<ListContainersQuery>,
 ) -> ApiResult<Vec<ContainerSummary>> {
+    // ── Try relay path ────────────────────────────────────────
+    if let Some(hostname) = resolve_endpoint(&params.endpoint).await {
+        return list_containers_via_relay(&hostname, params.include_health).await;
+    }
+
     let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let containers = docker
@@ -178,6 +386,11 @@ pub async fn inspect_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<ContainerDetail> {
+    // ── Try relay path ────────────────────────────────────────
+    if let Some(hostname) = resolve_endpoint(&params.endpoint).await {
+        return inspect_container_via_relay(&hostname, &id).await;
+    }
+
     let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     let info = docker
@@ -274,6 +487,11 @@ pub async fn start_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
+    // ── Try relay path ────────────────────────────────────────
+    if let Some(hostname) = resolve_endpoint(&params.endpoint).await {
+        return container_action_via_relay(&hostname, "docker.start", &id).await;
+    }
+
     let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
@@ -289,6 +507,11 @@ pub async fn stop_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
+    // ── Try relay path ────────────────────────────────────────
+    if let Some(hostname) = resolve_endpoint(&params.endpoint).await {
+        return container_action_via_relay(&hostname, "docker.stop", &id).await;
+    }
+
     let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker
@@ -304,6 +527,11 @@ pub async fn restart_container(
     Path(id): Path<String>,
     Query(params): Query<EndpointQuery>,
 ) -> ApiResult<serde_json::Value> {
+    // ── Try relay path ────────────────────────────────────────
+    if let Some(hostname) = resolve_endpoint(&params.endpoint).await {
+        return container_action_via_relay(&hostname, "docker.restart", &id).await;
+    }
+
     let docker = helpers::resolve_client(&state, params.endpoint.as_deref()).await?;
 
     docker

@@ -10,6 +10,7 @@ use futures::stream::StreamExt;
 use futures::SinkExt;
 use serde::Deserialize;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::helpers;
 use crate::models::EndpointQuery;
@@ -48,6 +49,14 @@ async fn handle_logs_stream(
     params: EndpointQuery,
 ) {
     let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+
+    // ── Try relay path first ──────────────────────────────────────
+    if let Some(relay_host) =
+        crate::ws_relay::get_relay_for_endpoint(&endpoint_id).await
+    {
+        handle_logs_via_relay(socket, &container_id, &relay_host).await;
+        return;
+    }
 
     let docker = {
         match helpers::resolve_client(&state, Some(&endpoint_id)).await {
@@ -117,6 +126,98 @@ async fn handle_logs_stream(
                         break;
                     }
                     None => break,
+                }
+            }
+            _ = &mut recv_task => {
+                // Client disconnected
+                break;
+            }
+        }
+    }
+
+    // Graceful close
+    let _ = sender.close().await;
+}
+
+/// Stream logs for a container through the relay protocol.
+///
+/// Sends a `docker.logs` request to the relay and forwards every
+/// Event (log line) directly to the browser WebSocket.
+async fn handle_logs_via_relay(
+    mut socket: WebSocket,
+    container_id: &str,
+    relay_host: &str,
+) {
+    use relay_protocol::Message as RelayMessage;
+    use relay_protocol::MessageType;
+
+    // Build the docker.logs request for a single container
+    let msg = RelayMessage::new_request(
+        Uuid::new_v4().to_string(),
+        "docker.logs",
+        serde_json::json!({
+            "container": container_id,
+            "follow": true,
+            "stdout": true,
+            "stderr": true,
+            "tail": 100,
+        }),
+    );
+
+    // Open a streaming relay command — returns a receiver that yields
+    // every Event message followed by the final Response.
+    let mut rx = match crate::ws_relay::send_relay_command_streaming(relay_host, msg).await {
+        Ok(rx) => rx,
+        Err(e) => {
+            let json = serde_json::json!({"error": format!("Relay error: {}", e)});
+            let _ = socket.send(Message::Text(json.to_string().into())).await;
+            let _ = socket.close().await;
+            return;
+        }
+    };
+
+    // Split the socket so we can detect client disconnect concurrently
+    let (mut sender, mut receiver) = socket.split();
+
+    // Spawn a task to handle incoming messages (detect close)
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = receiver.next().await {
+            if matches!(msg, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    // Stream relay events to the browser
+    loop {
+        tokio::select! {
+            item = rx.recv() => {
+                match item {
+                    Some(relay_msg) => {
+                        match relay_msg.msg_type {
+                            // Forward event payload (log line) to browser
+                            MessageType::Event => {
+                                // Relay sends: {"stream": "stdout", "line": "..."}
+                                let line = relay_msg.payload
+                                    .get("line")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let json = serde_json::json!({"stream": line});
+                                if sender.send(Message::Text(json.to_string().into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            // Final Response — stop streaming
+                            MessageType::Response => {
+                                break;
+                            }
+                            // Unexpected message type — ignore
+                            MessageType::Request => {
+                                continue;
+                            }
+                        }
+                    }
+                    None => break, // relay stream ended
                 }
             }
             _ = &mut recv_task => {

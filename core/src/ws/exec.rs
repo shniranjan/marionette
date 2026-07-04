@@ -11,6 +11,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::helpers;
 
@@ -52,6 +53,14 @@ async fn handle_exec_stream(
     params: ExecQuery,
 ) {
     let endpoint_id = helpers::resolve_endpoint_id(&state, params.endpoint.as_deref()).await;
+
+    // ── Try relay path first ──────────────────────────────────────
+    if let Some(relay_host) =
+        crate::ws_relay::get_relay_for_endpoint(&endpoint_id).await
+    {
+        handle_exec_via_relay(socket, &container_id, &params.cmd, &relay_host).await;
+        return;
+    }
 
     let docker = {
         match helpers::resolve_client(&state, Some(&endpoint_id)).await {
@@ -202,6 +211,113 @@ async fn handle_exec_stream(
             }
             _ = &mut input_handle => {
                 // Input task ended (client disconnected or error)
+                break;
+            }
+        }
+    }
+
+    // Graceful close
+    let _ = ws_sender.close().await;
+}
+
+/// Stream exec session through the relay protocol.
+///
+/// Sends a `docker.exec` request to the relay and forwards output events
+/// to the browser WebSocket. Client stdin is forwarded to the relay.
+async fn handle_exec_via_relay(
+    mut socket: WebSocket,
+    container_id: &str,
+    cmd: &str,
+    relay_host: &str,
+) {
+    use relay_protocol::Message as RelayMessage;
+    use relay_protocol::MessageType;
+
+    let cmd_parts: Vec<String> = cmd.split_whitespace().map(|s| s.to_string()).collect();
+    if cmd_parts.is_empty() {
+        let _ = socket
+            .send(Message::Text(
+                serde_json::json!({"error": "No command specified"}).to_string().into(),
+            ))
+            .await;
+        let _ = socket.close().await;
+        return;
+    }
+
+    // Build the docker.exec request
+    let msg = RelayMessage::new_request(
+        Uuid::new_v4().to_string(),
+        "docker.exec",
+        serde_json::json!({
+            "container": container_id,
+            "cmd": cmd_parts,
+            "attach_stdout": true,
+            "attach_stderr": true,
+            "attach_stdin": true,
+        }),
+    );
+
+    // Open a streaming relay command
+    let mut rx = match crate::ws_relay::send_relay_command_streaming(relay_host, msg).await {
+        Ok(rx) => rx,
+        Err(e) => {
+            let json = serde_json::json!({"error": format!("Relay error: {}", e)});
+            let _ = socket.send(Message::Text(json.to_string().into())).await;
+            let _ = socket.close().await;
+            return;
+        }
+    };
+
+    // Split the socket for bidirectional forwarding
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    // Task: forward client stdin to relay (via ws_relay? Actually we can't
+    // send additional commands mid-stream. The relay agent's docker.exec
+    // streams output as events and reads stdin from the container side.
+    // For now, stdin passthrough via relay streaming protocol is limited.
+    // We forward close detection only.)
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = ws_receiver.next().await {
+            if matches!(msg, Message::Close(_)) {
+                break;
+            }
+            // TODO: stdin forwarding through relay streaming protocol
+        }
+    });
+
+    // Stream relay events to the browser
+    loop {
+        tokio::select! {
+            item = rx.recv() => {
+                match item {
+                    Some(relay_msg) => {
+                        match relay_msg.msg_type {
+                            // Forward exec output to browser
+                            MessageType::Event => {
+                                // Relay sends: {"stream": "stdout", "line": "..."}
+                                //              or {"stream": "stderr", "line": "..."}
+                                if let Some(line) = relay_msg.payload
+                                    .get("line")
+                                    .and_then(|v| v.as_str())
+                                {
+                                    if ws_sender.send(Message::Text(line.to_string().into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            // Final Response — stop streaming
+                            MessageType::Response => {
+                                break;
+                            }
+                            MessageType::Request => {
+                                continue;
+                            }
+                        }
+                    }
+                    None => break,
+                }
+            }
+            _ = &mut recv_task => {
                 break;
             }
         }

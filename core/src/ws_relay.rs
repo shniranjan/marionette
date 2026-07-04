@@ -98,6 +98,48 @@ pub async fn send_relay_command(hostname: &str, msg: Message) -> Result<Message,
         .map_err(|_| "Relay dropped response channel".to_string())
 }
 
+use crate::models::DockerEndpoint;
+use crate::models::EndpointStatus;
+use crate::registry::EndpointRegistry;
+
+/// Resolve an endpoint_id for a relay hostname.
+/// Matches hostname to existing endpoints (case-insensitive by name),
+/// or creates a new endpoint so unauthenticated relays are visible
+/// to get_relay_for_endpoint().
+async fn resolve_endpoint_for_hostname(
+    registry: &Arc<EndpointRegistry>,
+    hostname: &str,
+) -> String {
+    // Try to match hostname to existing endpoint names (case-insensitive)
+    let existing = registry.list().await;
+    if let Some(ep) = existing.iter().find(|ep| ep.name.to_lowercase() == hostname.to_lowercase()) {
+        tracing::info!(%hostname, endpoint_id = %ep.id, "bound unauthenticated relay to existing endpoint");
+        return ep.id.clone();
+    }
+
+    // No match — create a new default endpoint
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let ep = DockerEndpoint {
+        id: new_id.clone(),
+        name: hostname.to_string(),
+        connection: "unix:///var/run/docker.sock".to_string(),
+        status: EndpointStatus::Disconnected,
+        tags: vec!["relay".to_string(), "auto".to_string()],
+        cert_path: None,
+        stacks_dir: None,
+    };
+    match registry.create(ep).await {
+        Ok(created) => {
+            tracing::info!(%hostname, endpoint_id = %created.id, "created default endpoint for unauthenticated relay");
+            created.id
+        }
+        Err(e) => {
+            tracing::warn!(%hostname, error = %e, "failed to create default endpoint for relay");
+            new_id // Return ID even if create partially failed
+        }
+    }
+}
+
 pub async fn relay_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<crate::AppState>>,
@@ -309,6 +351,12 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                     .to_lowercase();
 
                                 if !hostname.is_empty() {
+                                    // Resolve endpoint_id: match hostname to existing endpoints,
+                                    // or create a new default endpoint so unauthenticated relays
+                                    // are visible to get_relay_for_endpoint().
+                                    let endpoint_id = resolve_endpoint_for_hostname(
+                                        &state.registry, &hostname).await;
+
                                     let info = RelayInfo {
                                         connected: true,
                                         hostname: hostname.clone(),
@@ -317,7 +365,7 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                         os: msg.payload.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         relay_version: msg.payload.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         connected_at: Utc::now().to_rfc3339(),
-                                        endpoint_id: None,
+                                        endpoint_id: Some(endpoint_id),
                                     };
 
                                     let state = RelayState {

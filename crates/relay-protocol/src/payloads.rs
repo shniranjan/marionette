@@ -325,6 +325,21 @@ pub struct ComposeDownResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposeStopRequest {
+    pub project_dir: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposeStopResponse {
+    pub exit_code: i32,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComposeLogsRequest {
     pub project_dir: String,
     #[serde(skip_serializing_if = "Option::is_none")]

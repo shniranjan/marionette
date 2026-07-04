@@ -48,6 +48,7 @@ async fn handle_request(msg: Message, event_tx: &mpsc::UnboundedSender<Message>)
         "docker.stats" => handle_docker_stats(msg, event_tx).await,
         "compose.up" => handle_compose_up(msg, event_tx).await,
         "compose.down" => handle_compose_down(msg, event_tx).await,
+        "compose.stop" => handle_compose_stop(msg, event_tx).await,
         "compose.logs" => handle_compose_logs(msg, event_tx).await,
         "compose.config" => handle_compose_config(msg, event_tx).await,
         "image.ensure" => handle_image_ensure(msg, event_tx).await,
@@ -749,6 +750,10 @@ async fn handle_fs_read(msg: Message, _event_tx: &mpsc::UnboundedSender<Message>
     if path.is_empty() {
         return Some(Message::new_error(msg.id, "FS.INVALID_PATH", "Missing 'path' field", None));
     }
+    // Path sandboxing: restrict reads to /stacks/ prefix
+    if !path.starts_with("/stacks/") {
+        return Some(Message::new_error(msg.id, "FS.FORBIDDEN", "Path must be under /stacks/", None));
+    }
     match std::fs::read_to_string(path) {
         Ok(content) => {
             let size = content.len() as u64;
@@ -766,6 +771,10 @@ async fn handle_fs_write(msg: Message, _event_tx: &mpsc::UnboundedSender<Message
     let content = msg.payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
     if path.is_empty() {
         return Some(Message::new_error(msg.id, "FS.INVALID_PATH", "Missing 'path' field", None));
+    }
+    // Path sandboxing: restrict writes to /stacks/ prefix
+    if !path.starts_with("/stacks/") {
+        return Some(Message::new_error(msg.id, "FS.FORBIDDEN", "Path must be under /stacks/", None));
     }
     // Create parent directories if needed
     if let Some(parent) = std::path::Path::new(path).parent() {
@@ -874,6 +883,25 @@ async fn handle_compose_down(msg: Message, event_tx: &mpsc::UnboundedSender<Mess
     cmd.arg("down");
     if volumes { cmd.arg("--volumes"); }
     if remove_orphans { cmd.arg("--remove-orphans"); }
+    cmd.current_dir(project_dir);
+    run_compose_command(msg, event_tx, cmd).await
+}
+
+// ── compose.stop ──────────────────────────────────────────────────
+
+async fn handle_compose_stop(msg: Message, event_tx: &mpsc::UnboundedSender<Message>) -> Option<Message> {
+    let project_dir = msg.payload.get("project_dir").and_then(|v| v.as_str()).unwrap_or("");
+    if project_dir.is_empty() {
+        return Some(Message::new_error(msg.id, "COMPOSE.INVALID_DIR", "Missing project_dir", None));
+    }
+    let project_name = msg.payload.get("project_name").and_then(|v| v.as_str());
+    let file = msg.payload.get("file").and_then(|v| v.as_str());
+
+    let mut cmd = Command::new("docker");
+    cmd.arg("compose");
+    if let Some(pn) = project_name { cmd.args(["-p", pn]); }
+    if let Some(f) = file { cmd.args(["-f", f]); }
+    cmd.arg("stop");
     cmd.current_dir(project_dir);
     run_compose_command(msg, event_tx, cmd).await
 }
