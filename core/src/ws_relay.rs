@@ -177,11 +177,35 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
     // Track whether we've registered this relay in the RELAYS map
     let mut registered_hostname: Option<String> = None;
 
+    // DIAGNOSTIC: spawn a separate task that polls cmd_rx independently
+    let cmd_rx_diag = cmd_rx; // take ownership from the original binding
+    // We need a new channel for the select!, so create a proxy
+    let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<RelayCommand>();
+    let _cmd_tx_keepalive = cmd_tx.clone(); // keep original sender alive for RELAYS
+    tokio::spawn(async move {
+        let mut rx = cmd_rx_diag;
+        loop {
+            match rx.recv().await {
+                Some(cmd) => {
+                    tracing::info!(msg_id = %cmd.message.id, subtype = %cmd.message.subtype, "DIAG: cmd_rx received message, forwarding to select!");
+                    if diag_tx.send(cmd).is_err() {
+                        tracing::error!("DIAG: diag_tx closed, exiting");
+                        break;
+                    }
+                }
+                None => {
+                    tracing::warn!("DIAG: cmd_rx closed (all senders dropped), exiting");
+                    break;
+                }
+            }
+        }
+    });
+
     loop {
         tracing::trace!("handler loop iteration");
         tokio::select! {
             // Command from API → forward to relay
-            cmd = cmd_rx.recv() => {
+            cmd = diag_rx.recv() => {
                 match cmd {
                     Some(cmd) => {
                         let msg_id = cmd.message.id.clone();
