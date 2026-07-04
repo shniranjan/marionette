@@ -1,6 +1,11 @@
 # Marionette AI Agent Instructions
 
 > Marionette: Docker management UI — **Rust backend** (Axum + bollard), **TypeScript gateway** (Fastify), **React 19 SPA**, TypeScript frontend, optional relay-agent sidecar.
+>
+> **Full engineering methodology:** `.hermes/vault/RULE_BOOK.md` — the
+> strategic rule book covering understanding, standardizing, mitigating,
+> problem-solving, locating problems, designing, and wiring. This AGENTS.md
+> is the quick-reference; RULE_BOOK.md is the authoritative source.
 
 ---
 
