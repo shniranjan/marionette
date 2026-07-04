@@ -178,48 +178,57 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
     let mut registered_hostname: Option<String> = None;
 
     loop {
+        tracing::trace!("handler loop iteration");
         tokio::select! {
             // Command from API → forward to relay
-            Some(cmd) = cmd_rx.recv() => {
-                let msg_id = cmd.message.id.clone();
-                let subtype = cmd.message.subtype.clone();
-                tracing::info!(msg_id = %msg_id, subtype = %subtype, "RELAY LOOP: received command from API");
-                if let Some(stream_tx) = cmd.stream_tx {
-                    // Streaming mode: insert the caller's mpsc sender directly
-                    // so all events AND the final response flow to the caller.
-                    pending.lock().await.insert(msg_id.clone(), stream_tx);
-                } else {
-                    // Non-streaming mode: drain events, forward only final Response
-                    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-                    pending.lock().await.insert(msg_id.clone(), tx);
-                    let response_tx = cmd.response_tx;
-                    tokio::spawn(async move {
-                        while let Some(msg) = rx.recv().await {
-                            if msg.msg_type == relay_protocol::MessageType::Response {
-                                let _ = response_tx.send(msg);
-                                break;
-                            }
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(cmd) => {
+                        let msg_id = cmd.message.id.clone();
+                        let subtype = cmd.message.subtype.clone();
+                        tracing::info!(msg_id = %msg_id, subtype = %subtype, "RELAY LOOP: received command from API");
+                        if let Some(stream_tx) = cmd.stream_tx {
+                            // Streaming mode: insert the caller's mpsc sender directly
+                            // so all events AND the final response flow to the caller.
+                            pending.lock().await.insert(msg_id.clone(), stream_tx);
+                        } else {
+                            // Non-streaming mode: drain events, forward only final Response
+                            let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+                            pending.lock().await.insert(msg_id.clone(), tx);
+                            let response_tx = cmd.response_tx;
+                            tokio::spawn(async move {
+                                while let Some(msg) = rx.recv().await {
+                                    if msg.msg_type == relay_protocol::MessageType::Response {
+                                        let _ = response_tx.send(msg);
+                                        break;
+                                    }
+                                }
+                            });
                         }
-                    });
-                }
-                // Sign the command if we have an active session (required by relay)
-                let sig = {
-                    let sid_guard = current_session_id.lock().await;
-                    if let Some(ref sid) = *sid_guard {
-                        let canonical = serde_json::to_string(&cmd.message).unwrap();
-                        let mut sm = sessions.lock().await;
-                        sm.sign(sid, canonical.as_bytes()).map(|b| hex::encode(b))
-                    } else {
-                        None
+                        // Sign the command if we have an active session (required by relay)
+                        let sig = {
+                            let sid_guard = current_session_id.lock().await;
+                            if let Some(ref sid) = *sid_guard {
+                                let canonical = serde_json::to_string(&cmd.message).unwrap();
+                                let mut sm = sessions.lock().await;
+                                sm.sign(sid, canonical.as_bytes()).map(|b| hex::encode(b))
+                            } else {
+                                None
+                            }
+                        };
+                        let signed = SignedMessage::new(cmd.message, sig);
+                        let json = serde_json::to_string(&signed).unwrap();
+                        if socket.send(AxumMsg::Text(json.into())).await.is_err() {
+                            tracing::warn!(msg_id = %msg_id, "failed to forward command to relay");
+                            break;
+                        }
+                        tracing::info!(msg_id = %msg_id, "RELAY LOOP: command forwarded to relay via WebSocket");
                     }
-                };
-                let signed = SignedMessage::new(cmd.message, sig);
-                let json = serde_json::to_string(&signed).unwrap();
-                if socket.send(AxumMsg::Text(json.into())).await.is_err() {
-                    tracing::warn!(msg_id = %msg_id, "failed to forward command to relay");
-                    break;
+                    None => {
+                        tracing::warn!("cmd_rx closed — all senders dropped, exiting relay loop");
+                        break;
+                    }
                 }
-                tracing::info!(msg_id = %msg_id, "RELAY LOOP: command forwarded to relay via WebSocket");
             }
 
             // Message from relay → handle or resolve pending
