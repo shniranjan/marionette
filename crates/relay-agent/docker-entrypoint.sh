@@ -35,4 +35,4 @@ else
 fi
 
 echo "entrypoint: starting relay-agent as relay user"
-exec su relay -c 'exec /usr/local/bin/relay-agent'
+exec su -s /bin/sh relay -c 'exec /usr/local/bin/relay-agent'

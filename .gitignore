@@ -35,6 +35,7 @@ data/
 
 # Build artifacts
 *.tar.gz
+crates/relay-agent/relay-agent
 
 # AI-generated (never push)
 .hermes/

@@ -4,6 +4,7 @@ use crate::handlers;
 use crate::signed::SignedMessage;
 use futures_util::{SinkExt, StreamExt};
 use relay_protocol::{Message, MessageType};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMsg;
 
 /// Accept any TLS certificate (self-signed cert on homelab gateway).
@@ -92,6 +93,9 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
         tokio_tungstenite::connect_async(url).await?
     };
     let (mut write, mut read) = ws_stream.split();
+
+    // ── Streaming event channel: handlers → select! loop ─────
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Message>();
 
     tracing::info!("connected");
 
@@ -217,7 +221,7 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                                     return Err(anyhow::anyhow!("Registration failed: {}", err_msg));
                                 }
 
-                                let response = handlers::dispatch(signed.message).await;
+                                let response = handlers::dispatch(signed.message, &event_tx).await;
                                 if let Some(resp) = response {
                                     let canonical = serde_json::to_string(&resp)?;
                                     let sig = if auth.is_authenticated() {
@@ -242,6 +246,20 @@ async fn connect_and_serve(cfg: &Config) -> anyhow::Result<()> {
                     Some(Ok(_other)) => {}
                     Some(Err(e)) => return Err(e.into()),
                     None => return Ok(()),
+                }
+            }
+            // ── Streaming events from handlers → send to marionette ──
+            Some(event) = event_rx.recv() => {
+                let canonical = serde_json::to_string(&event)?;
+                let sig = if auth.is_authenticated() {
+                    auth.sign(canonical.as_bytes()).map(|s| hex::encode(s))
+                } else {
+                    None
+                };
+                let signed_event = SignedMessage::new(event, sig);
+                let json = serde_json::to_string(&signed_event)?;
+                if write.send(WsMsg::Text(json.into())).await.is_err() {
+                    return Err(anyhow::anyhow!("event send failed"));
                 }
             }
             _ = heartbeat.tick() => {

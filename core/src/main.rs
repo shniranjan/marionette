@@ -104,6 +104,7 @@ async fn main() {
         .route("/relay", get(ws_relay::relay_handler))
         .route("/relay/send", post(relay_send_command))
         .route("/relay/status", get(relay_status_handler))
+        .route("/relay/stream/{hostname}", get(ws_relay::stream_handler))
         // Containers
         .route("/containers", get(routes::containers::list_containers))
         .route("/containers/{id}", get(routes::containers::inspect_container))

@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import ThemeSwitcher from './ThemeSwitcher';
 import EndpointSwitcher from './EndpointSwitcher';
+import { getKey } from '../api/client';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
@@ -19,6 +21,15 @@ const NAV_ITEMS = [
 ];
 
 export default function Sidebar({ currentPage, onNavigate, currentEndpoint, onEndpointChange }) {
+  const [relayHosts, setRelayHosts] = useState([]);
+
+  // Fetch relay hosts on mount
+  useEffect(() => {
+    fetch('/api/relay/status', { headers: { 'X-Marionette-Key': getKey() || '' } })
+      .then(r => r.json())
+      .then(data => setRelayHosts(Object.keys(data || {})))
+      .catch(() => {});
+  }, []);
 
   return (
     <aside style={{
@@ -90,6 +101,53 @@ export default function Sidebar({ currentPage, onNavigate, currentEndpoint, onEn
           );
         })}
       </nav>
+
+      {/* Relay Hosts */}
+      {relayHosts.length > 0 && (
+        <div style={{ padding: '8px', borderTop: '1px solid var(--border)' }}>
+          <div style={{
+            fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.1em',
+            color: 'var(--text-secondary)', padding: '4px 12px', marginBottom: '4px',
+          }}>
+            🛰️ Relays
+          </div>
+          {relayHosts.map((hostname) => {
+            const active = currentPage === 'relayConsole';
+            return (
+              <button
+                key={hostname}
+                onClick={() => onNavigate('relayConsole', { relayHost: hostname })}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  background: active ? 'var(--bg-tertiary)' : 'transparent',
+                  color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                  fontWeight: active ? 600 : 400,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '0.8rem',
+                  marginBottom: '2px',
+                  transition: 'all 0.1s',
+                }}
+                onMouseEnter={(e) => {
+                  if (!active) e.currentTarget.style.background = 'var(--bg-tertiary)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <span style={{ fontSize: '0.85rem', width: '20px', textAlign: 'center' }}>📡</span>
+                {hostname}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Theme switcher at bottom */}
       <div style={{ padding: '12px', borderTop: '1px solid var(--border)' }}>

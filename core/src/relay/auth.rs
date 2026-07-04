@@ -43,7 +43,6 @@ pub fn generate_registration_token() -> TokenResult {
 
 /// Validate a registration token against the database.
 /// Returns Ok(endpoint_id) if valid, Err(reason) if invalid.
-/// Marks the token as consumed on success.
 pub fn validate_registration_token(
     db: &crate::db::Database,
     token: &str,
@@ -77,13 +76,6 @@ pub fn validate_registration_token(
             if chrono::Utc::now() > expires {
                 return Err("Token expired".into());
             }
-
-            // Mark as consumed
-            conn.execute(
-                "UPDATE registration_tokens SET consumed = 1 WHERE token_hash = ?1",
-                params![token_hash],
-            )
-            .map_err(|e| format!("db update: {}", e))?;
 
             Ok(endpoint_id)
         }

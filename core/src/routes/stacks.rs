@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::compose::ComposeRunner;
 use crate::helpers;
@@ -35,9 +36,74 @@ pub async fn list_stacks(
     Ok(Json(stacks))
 }
 
-/// Discover stacks on a remote endpoint by listing containers with
-/// Docker Compose v2 labels (com.docker.compose.project).
+/// Discover stacks on a remote endpoint using the relay agent.
+/// Falls back to Docker API container-label scanning if no relay is connected.
 async fn list_remote_stacks(
+    state: &Arc<crate::AppState>,
+    endpoint_id: &str,
+) -> ApiResult<Vec<StackSummary>> {
+    // Try relay first
+    if let Some(relay_host) = crate::ws_relay::get_relay_for_endpoint(endpoint_id).await {
+        return list_stacks_via_relay(&relay_host, endpoint_id).await;
+    }
+
+    // Fallback: Docker API container-label scanning
+    list_stacks_via_docker_api(state, endpoint_id).await
+}
+
+/// Discover stacks by listing /stacks directory via relay, then running
+/// compose config on each subdirectory.
+async fn list_stacks_via_relay(
+    relay_host: &str,
+    _endpoint_id: &str,
+) -> ApiResult<Vec<StackSummary>> {
+    use relay_protocol::Message;
+
+    // 1. List directories under /stacks
+    let list_msg = Message::new_request(
+        Uuid::new_v4().to_string(),
+        "fs.list",
+        serde_json::json!({"path": "/stacks"}),
+    );
+
+    let response = crate::ws_relay::send_relay_command(relay_host, list_msg)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Relay error: {}", e)))?;
+
+    let entries: Vec<serde_json::Value> = response
+        .payload
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut stacks = Vec::new();
+    for entry in entries {
+        let is_dir = entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !is_dir {
+            continue;
+        }
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+
+        // Build summary from directory listing only (fast path).
+        // Service counts and status are fetched lazily when user opens a stack.
+        stacks.push(StackSummary {
+            name: name.to_string(),
+            services: 0,
+            status: "unknown".to_string(),
+            file: format!("/stacks/{}", name),
+        });
+
+    }
+
+    Ok(Json(stacks))
+}
+
+/// Original Docker API container-label scanning fallback.
+async fn list_stacks_via_docker_api(
     state: &Arc<crate::AppState>,
     endpoint_id: &str,
 ) -> ApiResult<Vec<StackSummary>> {
@@ -55,7 +121,6 @@ async fn list_remote_stacks(
             )
         })?;
 
-    // List all containers (including stopped) with compose project labels
     let containers = docker
         .list_containers(Some(ListContainersOptions::<String> {
             all: true,
@@ -69,26 +134,20 @@ async fn list_remote_stacks(
             )
         })?;
 
-    // Group containers by compose project name
     let mut projects: HashMap<String, (usize, usize, String)> = HashMap::new();
-    // project_name → (total_services, running_services, status)
-
     for c in &containers {
         let labels = c.labels.as_ref();
         if let Some(project) = labels.and_then(|l| l.get("com.docker.compose.project")) {
             let state_str = c.state.as_deref().unwrap_or("unknown");
             let is_running = state_str == "running";
-
             let entry = projects.entry(project.clone()).or_insert((0, 0, "stopped".to_string()));
-            entry.0 += 1; // total services
-
+            entry.0 += 1;
             if is_running {
                 entry.1 += 1;
             }
         }
     }
 
-    // Determine overall status per project
     let stacks: Vec<StackSummary> = projects
         .into_iter()
         .map(|(name, (total, running, _))| {
@@ -101,7 +160,6 @@ async fn list_remote_stacks(
             } else {
                 "stopped".to_string()
             };
-
             StackSummary {
                 name,
                 services: total,

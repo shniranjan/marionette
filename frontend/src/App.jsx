@@ -19,6 +19,7 @@ import Swarm from './pages/Swarm';
 import Nginx from './pages/Nginx';
 import Routes from './pages/Routes';
 import Templates from './pages/Templates';
+import RelayConsole from './components/RelayConsole';
 import ErrorBoundary from './components/ErrorBoundary';
 import MaintenanceOverlay from './components/MaintenanceOverlay';
 
@@ -38,6 +39,7 @@ const PAGES = {
   nginx: Nginx,
   routes: Routes,
   templates: Templates,
+  relayConsole: RelayConsole,
 };
 
 export default function App() {
@@ -100,7 +102,7 @@ export default function App() {
         <main className="main-content">
           <Breadcrumb page={page} pageProps={pageProps} onNavigate={navigate} />
           <ErrorBoundary key={page}>
-            <PageComponent navigate={navigate} currentEndpoint={currentEndpoint} {...pageProps} />
+            <PageComponent navigate={navigate} currentEndpoint={currentEndpoint} onClose={() => navigate('dashboard')} {...pageProps} />
           </ErrorBoundary>
         </main>
       </div>

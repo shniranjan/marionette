@@ -1,5 +1,5 @@
 use axum::extract::ws::{Message as AxumMsg, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use chrono::Utc;
 use relay_protocol::payloads::PongResponse;
 use relay_protocol::Message;
@@ -13,7 +13,7 @@ use crate::relay::session::SessionManager;
 use crate::relay::signed::SignedMessage;
 
 /// Pending relay requests awaiting response.
-pub type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<Message>>>>;
+pub type PendingMap = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<Message>>>>;
 
 /// State for a single connected relay.
 struct RelayState {
@@ -32,6 +32,10 @@ fn relays() -> &'static Mutex<HashMap<String, RelayState>> {
 pub struct RelayCommand {
     pub message: Message,
     pub response_tx: oneshot::Sender<Message>,
+    /// When set, all events AND the final response are forwarded through this
+    /// mpsc sender instead of going through the oneshot wrapper. Used by the
+    /// streaming WebSocket endpoint.
+    pub stream_tx: Option<mpsc::UnboundedSender<Message>>,
 }
 
 /// Relay connection status and host information.
@@ -44,6 +48,7 @@ pub struct RelayInfo {
     pub os: String,
     pub relay_version: String,
     pub connected_at: String,
+    pub endpoint_id: Option<String>,
 }
 
 /// Return status for all connected relays.
@@ -54,6 +59,16 @@ pub async fn get_all_relay_status() -> HashMap<String, RelayInfo> {
         .iter()
         .map(|(hostname, state)| (hostname.clone(), state.info.clone()))
         .collect()
+}
+
+/// Find the hostname of a relay registered for the given endpoint.
+pub async fn get_relay_for_endpoint(endpoint_id: &str) -> Option<String> {
+    relays()
+        .lock()
+        .await
+        .iter()
+        .find(|(_, state)| state.info.endpoint_id.as_deref() == Some(endpoint_id))
+        .map(|(hostname, _)| hostname.clone())
 }
 
 /// Send a command to the relay identified by hostname and wait for response.
@@ -73,6 +88,7 @@ pub async fn send_relay_command(hostname: &str, msg: Message) -> Result<Message,
         .send(RelayCommand {
             message: msg,
             response_tx,
+            stream_tx: None,
         })
         .map_err(|_| "Relay disconnected while sending command".to_string())?;
 
@@ -109,9 +125,36 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
             // Command from API → forward to relay
             Some(cmd) = cmd_rx.recv() => {
                 let msg_id = cmd.message.id.clone();
-                pending.lock().await.insert(msg_id, cmd.response_tx);
-
-                let signed = SignedMessage::unsigned(cmd.message);
+                if let Some(stream_tx) = cmd.stream_tx {
+                    // Streaming mode: insert the caller's mpsc sender directly
+                    // so all events AND the final response flow to the caller.
+                    pending.lock().await.insert(msg_id, stream_tx);
+                } else {
+                    // Non-streaming mode: drain events, forward only final Response
+                    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+                    pending.lock().await.insert(msg_id, tx);
+                    let response_tx = cmd.response_tx;
+                    tokio::spawn(async move {
+                        while let Some(msg) = rx.recv().await {
+                            if msg.msg_type == relay_protocol::MessageType::Response {
+                                let _ = response_tx.send(msg);
+                                break;
+                            }
+                        }
+                    });
+                }
+                // Sign the command if we have an active session (required by relay)
+                let sig = {
+                    let sid_guard = current_session_id.lock().await;
+                    if let Some(ref sid) = *sid_guard {
+                        let canonical = serde_json::to_string(&cmd.message).unwrap();
+                        let mut sm = sessions.lock().await;
+                        sm.sign(sid, canonical.as_bytes()).map(|b| hex::encode(b))
+                    } else {
+                        None
+                    }
+                };
+                let signed = SignedMessage::new(cmd.message, sig);
                 let json = serde_json::to_string(&signed).unwrap();
                 if socket.send(AxumMsg::Text(json.into())).await.is_err() {
                     tracing::warn!("failed to forward command to relay");
@@ -133,10 +176,17 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
 
                         let msg = signed.message;
 
-                        // Check if this is a response to a pending command
-                        if msg.msg_type == relay_protocol::MessageType::Response {
-                            if let Some(response_tx) = pending.lock().await.remove(&msg.id) {
-                                let _ = response_tx.send(msg);
+                        // Check if this is a response or event for a pending command
+                        if msg.msg_type == relay_protocol::MessageType::Response
+                            || msg.msg_type == relay_protocol::MessageType::Event
+                        {
+                            let msg_id = msg.id.clone();
+                            let is_response = msg.msg_type == relay_protocol::MessageType::Response;
+                            if let Some(tx) = pending.lock().await.get(&msg_id) {
+                                let _ = tx.send(msg);
+                                if is_response {
+                                    pending.lock().await.remove(&msg_id);
+                                }
                                 continue;
                             }
                         }
@@ -174,10 +224,22 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                         }
 
                         // Build response (for register/ping from relay)
-                        let (subtype, response) = if msg.subtype == "register" {
+                        if msg.subtype == "register" {
                             let token = msg.payload.get("token")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
+
+                            // Validate token first to get endpoint_id
+                            let endpoint_id = match auth::validate_registration_token(state.registry.db(), token) {
+                                Ok(endpoint_id) => endpoint_id,
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "registration failed");
+                                    let err_resp = Message::new_error(msg.id, "AUTH.INVALID", &e, None);
+                                    let json = serde_json::to_string(&SignedMessage::unsigned(err_resp)).unwrap();
+                                    let _ = socket.send(AxumMsg::Text(json.into())).await;
+                                    continue;
+                                }
+                            };
 
                             // Capture host_info from the register payload and register in RELAYS
                             if let Some(hi) = msg.payload.get("host_info") {
@@ -194,43 +256,51 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                     os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                     connected_at: Utc::now().to_rfc3339(),
+                                    endpoint_id: Some(endpoint_id.clone()),
                                 };
 
                                 if !hostname.is_empty() {
                                     let state = RelayState {
                                         cmd_tx: cmd_tx.clone(),
-                                        info: info,
+                                        info,
                                     };
                                     relays().lock().await.insert(hostname.clone(), state);
                                     registered_hostname = Some(hostname);
                                 }
                             }
 
-                            match auth::validate_registration_token(state.registry.db(), token) {
-                                Ok(endpoint_id) => {
-                                    let session_id = uuid::Uuid::new_v4().to_string();
-                                    let mut sm = sessions.lock().await;
-                                    let session_key = sm.create_session(
-                                        session_id.clone(),
-                                        endpoint_id,
-                                    );
-                                    *current_session_id.lock().await = Some(session_id.clone());
-                                    tracing::info!(%session_id, "relay registered successfully");
+                            let session_id = uuid::Uuid::new_v4().to_string();
+                            let mut sm = sessions.lock().await;
+                            let session_key = sm.create_session(
+                                session_id.clone(),
+                                endpoint_id,
+                            );
+                            *current_session_id.lock().await = Some(session_id.clone());
+                            tracing::info!(%session_id, "relay registered successfully");
 
-                                    ("register_ok", serde_json::json!({
-                                        "session_id": session_id,
-                                        "session_key": hex::encode(&session_key)
-                                    }))
-                                }
-                                Err(e) => {
-                                    tracing::warn!(error = %e, "registration failed");
-                                    ("error", serde_json::json!({
-                                        "error_code": "AUTH.INVALID",
-                                        "message": e
-                                    }))
-                                }
+                            let resp_msg = Message::new_response(
+                                msg.id,
+                                "register_ok",
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "session_key": hex::encode(&session_key)
+                                }),
+                            );
+                            let canonical = serde_json::to_string(&resp_msg).unwrap();
+                            let sig = {
+                                let sid_guard = current_session_id.lock().await;
+                                sid_guard.as_ref().and_then(|sid| {
+                                    sessions.try_lock().ok().and_then(|s| s.sign(sid, canonical.as_bytes()))
+                                })
                             }
-                        } else if msg.subtype == "ping" {
+                            .map(|s| hex::encode(s));
+                            let signed_resp = SignedMessage::new(resp_msg, sig);
+                            let json = serde_json::to_string(&signed_resp).unwrap();
+                            let _ = socket.send(AxumMsg::Text(json.into())).await;
+                            continue;
+                        }
+
+                        let (subtype, response) = if msg.subtype == "ping" {
                             // Capture host_info from ping and register in RELAYS if not yet registered
                             if registered_hostname.is_none() {
                                 let hostname = msg.payload.get("hostname")
@@ -247,6 +317,7 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                         os: msg.payload.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         relay_version: msg.payload.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                         connected_at: Utc::now().to_rfc3339(),
+                                        endpoint_id: None,
                                     };
 
                                     let state = RelayState {
@@ -304,5 +375,97 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
         tracing::info!(%hostname, "relay disconnected");
     } else {
         tracing::info!("relay disconnected (was not registered)");
+    }
+}
+
+/// Send a command to a relay and get back a stream of ALL messages (Events +
+/// final Response). Unlike `send_relay_command` which returns only the final
+/// response, this returns an mpsc receiver that yields every Event as it
+/// arrives, followed by the final Response.
+pub async fn send_relay_command_streaming(
+    hostname: &str,
+    msg: Message,
+) -> Result<tokio::sync::mpsc::UnboundedReceiver<Message>, String> {
+    let (stream_tx, stream_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (dummy_tx, _dummy_rx) = oneshot::channel();
+
+    let cmd_tx = {
+        let guard = relays().lock().await;
+        guard
+            .get(hostname)
+            .ok_or_else(|| format!("No relay connected with hostname: {}", hostname))?
+            .cmd_tx
+            .clone()
+    };
+
+    cmd_tx
+        .send(RelayCommand {
+            message: msg,
+            response_tx: dummy_tx,
+            stream_tx: Some(stream_tx),
+        })
+        .map_err(|_| "Relay disconnected while sending command".to_string())?;
+
+    Ok(stream_rx)
+}
+
+/// WebSocket streaming endpoint for relay — /relay/stream/{hostname}
+///
+/// The browser sends JSON relay commands (same format as POST /relay/send)
+/// and receives all Events + the final Response in real time over the
+/// WebSocket.
+pub async fn stream_handler(
+    ws: WebSocketUpgrade,
+    Path(hostname): Path<String>,
+) -> impl axum::response::IntoResponse {
+    ws.on_upgrade(move |socket| handle_stream(socket, hostname))
+}
+
+async fn handle_stream(mut socket: WebSocket, hostname: String) {
+    tracing::info!(%hostname, "relay stream connected");
+
+    loop {
+        let msg = socket.recv().await;
+
+        match msg {
+            Some(Ok(AxumMsg::Text(text))) => {
+                // Parse incoming command from browser
+                let cmd: Message = match serde_json::from_str(&text) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        let err = serde_json::json!({"error": format!("Invalid JSON: {}", e)});
+                        let _ = socket.send(AxumMsg::Text(err.to_string().into())).await;
+                        continue;
+                    }
+                };
+
+                // Forward to relay and stream back all responses
+                match send_relay_command_streaming(&hostname, cmd).await {
+                    Ok(mut rx) => {
+                        // Drain all events + final response, sending each to browser
+                        while let Some(msg) = rx.recv().await {
+                            let json = serde_json::to_string(&msg).unwrap_or_default();
+                            if socket.send(AxumMsg::Text(json.into())).await.is_err() {
+                                tracing::warn!(%hostname, "browser disconnected during stream");
+                                return;
+                            }
+                            // Stop after the final response
+                            if msg.msg_type == relay_protocol::MessageType::Response {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let err = serde_json::json!({"error": e});
+                        let _ = socket.send(AxumMsg::Text(err.to_string().into())).await;
+                    }
+                }
+            }
+            Some(Ok(AxumMsg::Close(_))) | None => {
+                tracing::info!(%hostname, "relay stream disconnected");
+                return;
+            }
+            _ => {}
+        }
     }
 }
