@@ -165,58 +165,40 @@ pub async fn relay_handler(
 async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppState>) {
     tracing::info!("relay connected");
 
-    // Set up command channel for this relay session
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<RelayCommand>();
-
     let sessions = Mutex::new(SessionManager::new());
     let current_session_id = Mutex::new(None::<String>);
-
-    // Pending map for request-response matching
     let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
-
-    // Track whether we've registered this relay in the RELAYS map
     let mut registered_hostname: Option<String> = None;
 
-    // DIAGNOSTIC: spawn a separate task that polls cmd_rx independently
-    let cmd_rx_diag = cmd_rx; // take ownership from the original binding
-    // We need a new channel for the select!, so create a proxy
+    // Spawn dedicated task that polls cmd_rx independently of the select! loop.
+    // This prevents tokio::select! starvation where socket.recv() (heartbeats)
+    // always wins over cmd_rx.recv(). The spawned task forwards commands to a
+    // proxy channel that the select! can poll fairly.
+    let cmd_rx_diag = cmd_rx;
     let (diag_tx, mut diag_rx) = mpsc::unbounded_channel::<RelayCommand>();
-    let _cmd_tx_keepalive = cmd_tx.clone(); // keep original sender alive for RELAYS
+    let _cmd_tx_alive = cmd_tx.clone();
     tokio::spawn(async move {
         let mut rx = cmd_rx_diag;
         loop {
             match rx.recv().await {
                 Some(cmd) => {
-                    tracing::info!(msg_id = %cmd.message.id, subtype = %cmd.message.subtype, "DIAG: cmd_rx received message, forwarding to select!");
-                    if diag_tx.send(cmd).is_err() {
-                        tracing::error!("DIAG: diag_tx closed, exiting");
-                        break;
-                    }
+                    if diag_tx.send(cmd).is_err() { break; }
                 }
-                None => {
-                    tracing::warn!("DIAG: cmd_rx closed (all senders dropped), exiting");
-                    break;
-                }
+                None => break,
             }
         }
     });
 
     loop {
-        tracing::trace!("handler loop iteration");
         tokio::select! {
-            // Command from API → forward to relay
             cmd = diag_rx.recv() => {
                 match cmd {
                     Some(cmd) => {
                         let msg_id = cmd.message.id.clone();
-                        let subtype = cmd.message.subtype.clone();
-                        tracing::info!(msg_id = %msg_id, subtype = %subtype, "RELAY LOOP: received command from API");
                         if let Some(stream_tx) = cmd.stream_tx {
-                            // Streaming mode: insert the caller's mpsc sender directly
-                            // so all events AND the final response flow to the caller.
                             pending.lock().await.insert(msg_id.clone(), stream_tx);
                         } else {
-                            // Non-streaming mode: drain events, forward only final Response
                             let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
                             pending.lock().await.insert(msg_id.clone(), tx);
                             let response_tx = cmd.response_tx;
@@ -229,47 +211,33 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                 }
                             });
                         }
-                        // Sign the command if we have an active session (required by relay)
                         let sig = {
                             let sid_guard = current_session_id.lock().await;
                             if let Some(ref sid) = *sid_guard {
                                 let canonical = serde_json::to_string(&cmd.message).unwrap();
                                 let mut sm = sessions.lock().await;
                                 sm.sign(sid, canonical.as_bytes()).map(|b| hex::encode(b))
-                            } else {
-                                None
-                            }
+                            } else { None }
                         };
                         let signed = SignedMessage::new(cmd.message, sig);
                         let json = serde_json::to_string(&signed).unwrap();
                         if socket.send(AxumMsg::Text(json.into())).await.is_err() {
-                            tracing::warn!(msg_id = %msg_id, "failed to forward command to relay");
+                            tracing::warn!(msg_id = %msg_id, "ws send failed");
                             break;
                         }
-                        tracing::info!(msg_id = %msg_id, "RELAY LOOP: command forwarded to relay via WebSocket");
                     }
-                    None => {
-                        tracing::warn!("cmd_rx closed — all senders dropped, exiting relay loop");
-                        break;
-                    }
+                    None => break,
                 }
             }
 
-            // Message from relay → handle or resolve pending
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(AxumMsg::Text(text))) => {
                         let signed: SignedMessage = match serde_json::from_str(&text) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!(error = %e, "failed to parse signed message");
-                                continue;
-                            }
+                            Ok(s) => s, Err(e) => { tracing::warn!(error = %e, "parse error"); continue; }
                         };
-
                         let msg = signed.message;
 
-                        // Check if this is a response or event for a pending command
                         if msg.msg_type == relay_protocol::MessageType::Response
                             || msg.msg_type == relay_protocol::MessageType::Event
                         {
@@ -277,14 +245,11 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                             let is_response = msg.msg_type == relay_protocol::MessageType::Response;
                             if let Some(tx) = pending.lock().await.get(&msg_id) {
                                 let _ = tx.send(msg);
-                                if is_response {
-                                    pending.lock().await.remove(&msg_id);
-                                }
+                                if is_response { pending.lock().await.remove(&msg_id); }
                                 continue;
                             }
                         }
 
-                        // Verify signature if we have an active session
                         {
                             let sid = current_session_id.lock().await;
                             if let Some(ref sid) = *sid {
@@ -292,183 +257,108 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                                 match signed.signature {
                                     Some(ref sig) => {
                                         let canonical = serde_json::to_string(&msg).unwrap();
-                                        let sig_bytes = match hex::decode(sig) {
-                                            Ok(b) => b,
-                                            Err(_) => {
-                                                tracing::warn!("invalid signature hex");
-                                                continue;
+                                        match hex::decode(sig) {
+                                            Ok(sig_bytes) => {
+                                                if !sessions.verify(sid, canonical.as_bytes(), &sig_bytes)
+                                                    { tracing::warn!("invalid HMAC"); continue; }
+                                                if !sessions.check_nonce(sid, &msg.id)
+                                                    { tracing::warn!("replay"); continue; }
                                             }
-                                        };
-                                        if !sessions.verify(sid, canonical.as_bytes(), &sig_bytes) {
-                                            tracing::warn!("invalid HMAC signature");
-                                            continue;
-                                        }
-                                        if !sessions.check_nonce(sid, &msg.id) {
-                                            tracing::warn!(nonce = %msg.id, "replay detected");
-                                            continue;
+                                            Err(_) => { tracing::warn!("invalid sig hex"); continue; }
                                         }
                                     }
-                                    None => {
-                                        tracing::warn!("missing signature on authenticated session");
-                                        continue;
-                                    }
+                                    None => { tracing::warn!("missing signature"); continue; }
                                 }
                             }
                         }
 
-                        // Build response (for register/ping from relay)
                         if msg.subtype == "register" {
-                            let token = msg.payload.get("token")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-
-                            // Validate token first to get endpoint_id
+                            let token = msg.payload.get("token").and_then(|v| v.as_str()).unwrap_or("");
                             let endpoint_id = match auth::validate_registration_token(state.registry.db(), token) {
-                                Ok(endpoint_id) => endpoint_id,
+                                Ok(eid) => eid,
                                 Err(e) => {
                                     tracing::warn!(error = %e, "registration failed");
-                                    let err_resp = Message::new_error(msg.id, "AUTH.INVALID", &e, None);
-                                    let json = serde_json::to_string(&SignedMessage::unsigned(err_resp)).unwrap();
-                                    let _ = socket.send(AxumMsg::Text(json.into())).await;
+                                    let err = Message::new_error(msg.id, "AUTH.INVALID", &e, None);
+                                    let _ = socket.send(AxumMsg::Text(
+                                        serde_json::to_string(&SignedMessage::unsigned(err)).unwrap().into())).await;
                                     continue;
                                 }
                             };
-
-                            // Capture host_info from the register payload and register in RELAYS
                             if let Some(hi) = msg.payload.get("host_info") {
-                                let hostname = hi.get("hostname")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_lowercase();
-
-                                let info = RelayInfo {
-                                    connected: true,
-                                    hostname: hostname.clone(),
-                                    docker_version: hi.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                    arch: hi.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                    os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                    relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                    connected_at: Utc::now().to_rfc3339(),
-                                    endpoint_id: Some(endpoint_id.clone()),
-                                };
-
+                                let hostname = hi.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
                                 if !hostname.is_empty() {
-                                    let state = RelayState {
+                                    relays().lock().await.insert(hostname.clone(), RelayState {
                                         cmd_tx: cmd_tx.clone(),
-                                        info,
-                                    };
-                                    relays().lock().await.insert(hostname.clone(), state);
+                                        info: RelayInfo {
+                                            connected: true, hostname: hostname.clone(),
+                                            docker_version: hi.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                            arch: hi.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                            os: hi.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                            relay_version: hi.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                            connected_at: Utc::now().to_rfc3339(), endpoint_id: Some(endpoint_id.clone()),
+                                        },
+                                    });
                                     registered_hostname = Some(hostname);
                                 }
                             }
-
                             let session_id = uuid::Uuid::new_v4().to_string();
                             let mut sm = sessions.lock().await;
-                            let session_key = sm.create_session(
-                                session_id.clone(),
-                                endpoint_id,
-                            );
+                            let session_key = sm.create_session(session_id.clone(), endpoint_id);
                             *current_session_id.lock().await = Some(session_id.clone());
-                            tracing::info!(%session_id, "relay registered successfully");
-
-                            let resp_msg = Message::new_response(
-                                msg.id,
-                                "register_ok",
-                                serde_json::json!({
-                                    "session_id": session_id,
-                                    "session_key": hex::encode(&session_key)
-                                }),
-                            );
-                            let canonical = serde_json::to_string(&resp_msg).unwrap();
-                            let sig = {
-                                let sid_guard = current_session_id.lock().await;
-                                sid_guard.as_ref().and_then(|sid| {
-                                    sessions.try_lock().ok().and_then(|s| s.sign(sid, canonical.as_bytes()))
-                                })
-                            }
-                            .map(|s| hex::encode(s));
-                            let signed_resp = SignedMessage::new(resp_msg, sig);
-                            let json = serde_json::to_string(&signed_resp).unwrap();
-                            let _ = socket.send(AxumMsg::Text(json.into())).await;
+                            let resp = Message::new_response(msg.id, "register_ok",
+                                serde_json::json!({"session_id": session_id, "session_key": hex::encode(&session_key)}));
+                            let canonical = serde_json::to_string(&resp).unwrap();
+                            let sig = { let sg = current_session_id.lock().await;
+                                sg.as_ref().and_then(|sid| sessions.try_lock().ok().and_then(|s| s.sign(sid, canonical.as_bytes())))
+                            }.map(|s| hex::encode(s));
+                            let _ = socket.send(AxumMsg::Text(
+                                serde_json::to_string(&SignedMessage::new(resp, sig)).unwrap().into())).await;
                             continue;
                         }
 
-                        let (subtype, response) = if msg.subtype == "ping" {
-                            // Capture host_info from ping and register in RELAYS if not yet registered
+                        let resp = if msg.subtype == "ping" {
                             if registered_hostname.is_none() {
-                                let hostname = msg.payload.get("hostname")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_lowercase();
-
-                                if !hostname.is_empty() {
-                                    // Resolve endpoint_id: match hostname to existing endpoints,
-                                    // or create a new default endpoint so unauthenticated relays
-                                    // are visible to get_relay_for_endpoint().
-                                    let endpoint_id = resolve_endpoint_for_hostname(
-                                        &state.registry, &hostname).await;
-
-                                    let info = RelayInfo {
-                                        connected: true,
-                                        hostname: hostname.clone(),
-                                        docker_version: msg.payload.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        arch: msg.payload.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        os: msg.payload.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        relay_version: msg.payload.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                        connected_at: Utc::now().to_rfc3339(),
-                                        endpoint_id: Some(endpoint_id),
-                                    };
-
-                                    let state = RelayState {
-                                        cmd_tx: cmd_tx.clone(),
-                                        info,
-                                    };
-                                    relays().lock().await.insert(hostname.clone(), state);
-                                    registered_hostname = Some(hostname);
+                                if let Some(h) = msg.payload.get("hostname").and_then(|v| v.as_str()) {
+                                    let hn = h.to_lowercase();
+                                    if !hn.is_empty() {
+                                        let eid = resolve_endpoint_for_hostname(&state.registry, &hn).await;
+                                        relays().lock().await.insert(hn.clone(), RelayState {
+                                            cmd_tx: cmd_tx.clone(),
+                                            info: RelayInfo {
+                                                connected: true, hostname: hn.clone(),
+                                                docker_version: msg.payload.get("docker_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                arch: msg.payload.get("arch").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                os: msg.payload.get("os").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                relay_version: msg.payload.get("relay_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                connected_at: Utc::now().to_rfc3339(), endpoint_id: Some(eid),
+                                            },
+                                        });
+                                        registered_hostname = Some(hn);
+                                    }
                                 }
                             }
-
-                            ("pong", serde_json::to_value(PongResponse {
-                                uptime_secs: 0,
-                                docker_version: "26.1.3".into(),
-                                arch: "aarch64".into(),
-                                os: "linux".into(),
-                                relay_version: None,
-                            }).unwrap())
+                            Message::new_response(msg.id, "pong",
+                                serde_json::to_value(PongResponse { uptime_secs: 0, docker_version: "26.1.3".into(),
+                                    arch: "aarch64".into(), os: "linux".into(), relay_version: None }).unwrap())
                         } else {
-                            ("error", serde_json::json!({
-                                "error_code": "NOT_IMPLEMENTED",
-                                "message": format!("Unknown subtype: {}", msg.subtype)
-                            }))
+                            Message::new_error(msg.id, "NOT_IMPLEMENTED", &format!("Unknown subtype: {}", msg.subtype), None)
                         };
-
-                        let resp_msg = Message::new_response(msg.id, subtype, response);
-                        let canonical = serde_json::to_string(&resp_msg).unwrap();
-                        let sig = {
-                            let sid_guard = current_session_id.lock().await;
-                            sid_guard.as_ref().and_then(|sid| {
-                                sessions.try_lock().ok().and_then(|s| s.sign(sid, canonical.as_bytes()))
-                            })
-                        }
-                        .map(|s| hex::encode(s));
-
-                        let signed_resp = SignedMessage::new(resp_msg, sig);
-                        let json = serde_json::to_string(&signed_resp).unwrap();
-                        let _ = socket.send(AxumMsg::Text(json.into())).await;
+                        let canonical = serde_json::to_string(&resp).unwrap();
+                        let sig = { let sg = current_session_id.lock().await;
+                            sg.as_ref().and_then(|sid| sessions.try_lock().ok().and_then(|s| s.sign(sid, canonical.as_bytes())))
+                        }.map(|s| hex::encode(s));
+                        let _ = socket.send(AxumMsg::Text(
+                            serde_json::to_string(&SignedMessage::new(resp, sig)).unwrap().into())).await;
                     }
                     Some(Ok(AxumMsg::Close(_))) => break,
-                    Some(Ok(_)) => {}
-                    Some(Err(e)) => {
-                        tracing::warn!(error = %e, "websocket error");
-                        break;
-                    }
+                    Some(Ok(_)) => {},
+                    Some(Err(e)) => { tracing::warn!(error = %e, "ws error"); break; }
                     None => break,
                 }
             }
         }
     }
 
-    // Remove this relay from the registry on disconnect
     if let Some(hostname) = registered_hostname {
         relays().lock().await.remove(&hostname);
         tracing::info!(%hostname, "relay disconnected");
@@ -476,6 +366,7 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
         tracing::info!("relay disconnected (was not registered)");
     }
 }
+
 
 /// Send a command to a relay and get back a stream of ALL messages (Events +
 /// final Response). Unlike `send_relay_command` which returns only the final
