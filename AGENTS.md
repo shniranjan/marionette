@@ -2,10 +2,12 @@
 
 > Marionette: Docker management UI — **Rust backend** (Axum + bollard), **TypeScript gateway** (Fastify), **React 19 SPA**, TypeScript frontend, optional relay-agent sidecar.
 >
-> **Full engineering methodology:** `.hermes/vault/RULE_BOOK.md` — the
-> strategic rule book covering understanding, standardizing, mitigating,
-> problem-solving, locating problems, designing, and wiring. This AGENTS.md
-> is the quick-reference; RULE_BOOK.md is the authoritative source.
+> **⛔ ACTIVE EXECUTION MODE** — All agents must follow `EXECUTION_PLAN.md`.
+> This is the ONLY plan document. No design discussions. No scope creep.
+> Build phases 0-9 in order. Verify at every gate.
+>
+> `.hermes/vault/RULE_BOOK.md` and `.hermes/vault/tunnel-loom/` are
+> reference only — for understanding WHY, not for changing WHAT.
 
 ---
 
