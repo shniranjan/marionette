@@ -74,9 +74,11 @@ pub async fn get_relay_for_endpoint(endpoint_id: &str) -> Option<String> {
 /// Send a command to the relay identified by hostname and wait for response.
 pub async fn send_relay_command(hostname: &str, msg: Message) -> Result<Message, String> {
     let (response_tx, response_rx) = oneshot::channel();
+    let msg_id = msg.id.clone();
 
     let cmd_tx = {
         let guard = relays().lock().await;
+        tracing::info!(%hostname, relay_count = guard.len(), msg_id = %msg_id, "send_relay_command: looking up relay");
         guard
             .get(hostname)
             .ok_or_else(|| format!("No relay connected with hostname: {}", hostname))?
@@ -84,18 +86,31 @@ pub async fn send_relay_command(hostname: &str, msg: Message) -> Result<Message,
             .clone()
     };
 
+    tracing::info!(%hostname, msg_id = %msg_id, "send_relay_command: got cmd_tx, sending");
     cmd_tx
         .send(RelayCommand {
             message: msg,
             response_tx,
             stream_tx: None,
         })
-        .map_err(|_| "Relay disconnected while sending command".to_string())?;
+        .map_err(|_| {
+            tracing::error!(%hostname, msg_id = %msg_id, "send_relay_command: cmd_tx send FAILED (channel closed)");
+            "Relay disconnected while sending command".to_string()
+        })?;
 
-    tokio::time::timeout(std::time::Duration::from_secs(30), response_rx)
+    tracing::info!(%hostname, msg_id = %msg_id, "send_relay_command: waiting for response");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), response_rx)
         .await
-        .map_err(|_| "Relay response timeout".to_string())?
-        .map_err(|_| "Relay dropped response channel".to_string())
+        .map_err(|_| {
+            tracing::error!(%hostname, msg_id = %msg_id, "send_relay_command: TIMEOUT (30s)");
+            "Relay response timeout".to_string()
+        })?
+        .map_err(|_| {
+            tracing::error!(%hostname, msg_id = %msg_id, "send_relay_command: response channel dropped");
+            "Relay dropped response channel".to_string()
+        });
+    tracing::info!(%hostname, msg_id = %msg_id, "send_relay_command: response received");
+    result
 }
 
 use crate::models::DockerEndpoint;
@@ -167,6 +182,7 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
             // Command from API → forward to relay
             Some(cmd) = cmd_rx.recv() => {
                 let msg_id = cmd.message.id.clone();
+                tracing::info!(msg_id = %msg_id, subtype = %cmd.message.subtype, "RELAY LOOP: received command from API");
                 if let Some(stream_tx) = cmd.stream_tx {
                     // Streaming mode: insert the caller's mpsc sender directly
                     // so all events AND the final response flow to the caller.
@@ -199,9 +215,10 @@ async fn handle_relay_connection(mut socket: WebSocket, state: Arc<crate::AppSta
                 let signed = SignedMessage::new(cmd.message, sig);
                 let json = serde_json::to_string(&signed).unwrap();
                 if socket.send(AxumMsg::Text(json.into())).await.is_err() {
-                    tracing::warn!("failed to forward command to relay");
+                    tracing::warn!(msg_id = %msg_id, "failed to forward command to relay");
                     break;
                 }
+                tracing::info!(msg_id = %msg_id, "RELAY LOOP: command forwarded to relay via WebSocket");
             }
 
             // Message from relay → handle or resolve pending
