@@ -49,3 +49,4 @@ docs/project-inception-*
 target/
 **/target/
 .recycle/
+EXECUTION_PLAN.md
