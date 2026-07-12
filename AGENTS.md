@@ -2,7 +2,7 @@
 
 > Marionette: Docker management UI — **Rust backend** (Axum + bollard), **TypeScript gateway** (Fastify), **React 19 SPA**, TypeScript frontend, optional relay-agent sidecar.
 >
-> **⚡ ACTIVE BUILD** — `EXECUTION_PLAN.md` is the build script (phases, gates, hard stops).
+> **⚡ ACTIVE BUILD** — `AS_BUILT.md` (.hermes/vault/tunnel-loom/) is the authoritative build reference.
 > **Vault docs** (`.hermes/vault/tunnel-loom/`) are the design authority — specs, protocol, architecture.
 > **Build approach:** Docker socket-proxy (no Rust on host). `python3 → Docker API → rust:1.96-alpine`.
 >
