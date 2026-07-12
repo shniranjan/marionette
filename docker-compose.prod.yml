@@ -1,59 +1,25 @@
-# Production deployment: marionette core + gateway on .59, relay agent on .17
-# Run on .59:
-#   docker compose -f docker-compose.prod.yml up -d
-# Run on .17:
-#   docker compose -f docker-compose.prod.yml --profile relay up -d
-
-version: "3.9"
-
 services:
-  # ── Marionette (core + gateway + frontend) ──
   marionette:
-    image: marionette:0.9.0
+    #image: ghcr.io/shniranjan/marionette:latest
+    image: marionette:0.9.0 #latest
     container_name: marionette
-    network_mode: host
+    ports:
+      - 8000:8000
+      - 8443:8443
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - marionette_data:/opt/marionette/data
-      - /opt/stacks:/opt/stacks
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/niranjan/dockerComposer:/stacks
+      - /srv/docker_config/marionette/data:/data
+      - /srv/docker_config/marionette/certs:/app/certs:ro
     environment:
-      - MARIONETTE_PORT=9199
-      - MARIONETTE_GATEWAY_PORT=3001
+      - MARIONETTE_PORT=8000
+      - MARIONETTE_GATEWAY_PORT=8443
       - RUST_LOG=info
       - MARIONETTE_RELAY_ADDR=0.0.0.0:9121
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9199/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    networks:
+      - marionette_marionette-net
 
-  # ── Relay Agent (sidecar on .17) ──
-  relay-agent:
-    image: marionette:0.9.0
-    container_name: relay-agent
-    command: relay-agent
-    ports:
-      - "9120:9120"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/stacks:/opt/stacks
-      - relay_data:/opt/marionette/data
-    environment:
-      - MARIONETTE_URL=ws://192.168.1.59:9199/relay
-      - MARIONETTE_TOKEN=${RELAY_TOKEN:?RELAY_TOKEN required}
-      - RELAY_PORT=9120
-      - MARIONETTE_RELAY_ADDR=0.0.0.0:9120
-      - RUST_LOG=info
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9120/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    profiles:
-      - relay
-
-volumes:
-  marionette_data:
-  relay_data:
+networks:
+  marionette_marionette-net:
+    external: true
