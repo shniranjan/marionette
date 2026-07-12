@@ -12,6 +12,10 @@ services:
       - /srv/docker_config/marionette/data:/data
       - /srv/docker_config/marionette/certs:/app/certs:ro
     environment:
+      - MARIONETTE_KEY=${MARIONETTE_KEY:-Rocket#101}
+      - MARIONETTE_DB_PATH=${MARIONETTE_DB_PATH:-/data/marionette.db}
+      - MARIONETTE_STACKS_DIR=${MARIONETTE_STACKS_DIR:-/stacks}
+      - MARIONETTE_LOG_LEVEL=${MARIONETTE_LOG_LEVEL:-info}
       - MARIONETTE_PORT=8000
       - MARIONETTE_GATEWAY_PORT=8443
       - RUST_LOG=info
