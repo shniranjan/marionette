@@ -31,6 +31,7 @@ async fn main() {
         .route("/relay", get(ws_relay::relay_handler))
         // Relay status API
         .route("/api/relay/status", get(relay_status))
+        .route("/api/relay", get(relay_status))
         // ── Container routes ──────────────────────────────────
         .route("/api/containers", get(routes::list_containers))
         .route("/api/containers/{id}", get(routes::inspect_container))
