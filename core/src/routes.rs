@@ -58,6 +58,21 @@ fn to_json<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, String> 
     serde_json::to_value(value).map_err(|e| format!("Serialization error: {}", e))
 }
 
+/// Add flattened `name` field to container JSON (frontend expects `name`, Docker gives `Names[]`)
+fn add_container_names(containers: &mut serde_json::Value) {
+    if let Some(arr) = containers.as_array_mut() {
+        for c in arr {
+            if let Some(obj) = c.as_object_mut() {
+                if let Some(names) = obj.get("Names").and_then(|n| n.as_array()) {
+                    if let Some(first) = names.first().and_then(|n| n.as_str()) {
+                        obj.insert("name".into(), serde_json::Value::String(first.trim_start_matches('/').into()));
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── Containers ───────────────────────────────────────────────────────
 
 /// GET /api/containers(?endpoint=hostname)
@@ -73,7 +88,10 @@ pub async fn list_containers(
         if host != "local" {
             let msg = relay_request("docker.ps", serde_json::json!({"all": true}));
             match crate::ws_relay::send_relay_command(host, msg, RELAY_TIMEOUT).await {
-                Ok(resp) => return Ok::<_, (StatusCode, Json<serde_json::Value>)>(Json(resp.payload)),
+                Ok(mut resp) => {
+                    add_container_names(&mut resp.payload);
+                    return Ok::<_, (StatusCode, Json<serde_json::Value>)>(Json(resp.payload));
+                }
                 Err(e) => tracing::warn!(%host, error = %e, "relay failed, falling back to local bollard"),
             }
         }
@@ -89,9 +107,10 @@ pub async fn list_containers(
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
-    let json = to_json(&containers)
+    let mut json = to_json(&containers)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
+    add_container_names(&mut json);
     Ok(Json(json))
 }
 
