@@ -33,6 +33,7 @@ async fn main() {
         .route("/api/relay/status", get(relay_status))
         .route("/api/relay", get(relay_status))
         .route("/api/system", get(system_info))
+        .route("/api/endpoints", get(list_endpoints))
         // ── Container routes ──────────────────────────────────
         .route("/api/containers", get(routes::list_containers))
         .route("/api/containers/{id}", get(routes::inspect_container))
@@ -90,9 +91,36 @@ async fn system_info() -> Json<serde_json::Value> {
         .ok()
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".into());
+    let endpoints: Vec<serde_json::Value> = ws_relay::list_relays()
+        .await
+        .iter()
+        .map(|r| serde_json::json!({
+            "hostname": r.hostname,
+            "connected": r.relay_connected,
+        }))
+        .collect();
     Json(serde_json::json!({
         "hostname": hostname,
         "version": env!("CARGO_PKG_VERSION"),
-        "docker_endpoints": [],
+        "docker_endpoints": endpoints,
     }))
+}
+
+/// GET /api/endpoints → list of Docker endpoints (dashboard needs this)
+async fn list_endpoints() -> Json<serde_json::Value> {
+    let relays = ws_relay::list_relays().await;
+    let mut endpoints: Vec<serde_json::Value> = relays
+        .iter()
+        .map(|r| serde_json::json!({
+            "hostname": r.hostname,
+            "connected": r.relay_connected,
+            "type": "remote",
+        }))
+        .collect();
+    endpoints.push(serde_json::json!({
+        "hostname": "local",
+        "connected": true,
+        "type": "local",
+    }));
+    Json(serde_json::json!(endpoints))
 }
