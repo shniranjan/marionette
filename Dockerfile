@@ -1,79 +1,54 @@
-# ── Stage 1: Rust core build ─────────────────────────────────
+# ── STAGE 1: Rust builder ──────────────────────────────────────────────
 FROM rust:1.96-alpine AS rust-builder
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig gcc make
+RUN apk add --no-cache musl-dev openssl-dev pkgconfig
 WORKDIR /build
-# Workspace root
-COPY Cargo.toml Cargo.lock ./
-# Shared protocol crate
-COPY crates/relay-protocol/ crates/relay-protocol/
-# Relay agent crate (manifest only — needed for workspace resolution)
-COPY crates/relay-agent/Cargo.toml crates/relay-agent/
-COPY crates/relay-agent/src/ crates/relay-agent/src/
-# Core crate
-COPY core/Cargo.toml core/Cargo.lock core/
-COPY core/src/ core/src/
-RUN cargo build --release --bin marionette-core
-RUN strip target/release/marionette-core
 
-# ── Stage 2: Frontend build ──────────────────────────────────
-FROM node:22-alpine AS frontend-builder
+# Copy everything and build (single pass — no layered caching tricks)
+COPY . .
+RUN cargo build --release --bin marionette-core --bin relay-agent
+
+# Strip debug symbols
+RUN strip /build/target/release/marionette-core
+RUN strip /build/target/release/relay-agent
+
+# ── STAGE 2: Node.js frontend builder ──────────────────────────────────
+FROM node:22-alpine AS node-builder
 WORKDIR /build
-COPY frontend/package.json ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ ./
-RUN npm run build
+RUN npm run build   # → frontend/dist/
 
-# ── Stage 3: Gateway build ───────────────────────────────────
-FROM node:22-alpine AS gateway-builder
-WORKDIR /build
-COPY gateway/package.json gateway/package-lock.json ./
-RUN npm install
-COPY gateway/tsconfig.json ./
-COPY gateway/src/ ./src/
-RUN npm run build
-
-# ── Stage 4: Runtime ─────────────────────────────────────────
+# ── STAGE 3: Runtime ───────────────────────────────────────────────────
 FROM alpine:3.21
 RUN apk add --no-cache \
-    nodejs \
-    npm \
-    supervisor \
-    curl \
     ca-certificates \
-    openssl \
+    tzdata \
+    curl \
+    bash \
     docker-cli \
-    docker-cli-compose \
-    nginx
+    docker-compose \
+    supervisor \
+    python3
 
-WORKDIR /app
+# Copy Rust binaries
+COPY --from=rust-builder /build/target/release/marionette-core /usr/local/bin/marionette-core
+COPY --from=rust-builder /build/target/release/relay-agent /usr/local/bin/relay-agent
 
-# Copy Rust binary
-COPY --from=rust-builder /build/target/release/marionette-core /usr/local/bin/
+# Copy frontend static assets
+COPY --from=node-builder /build/dist /opt/marionette/frontend
 
-# Copy gateway (production deps + built JS)
-COPY --from=gateway-builder /build/package.json /build/package-lock.json /app/gateway/
-RUN cd /app/gateway && npm install --omit=dev
-COPY --from=gateway-builder /build/dist/ /app/gateway/dist/
+# Copy supervisor config
+COPY deploy/supervisord.conf /etc/supervisord.conf
 
-# Copy frontend SPA
-COPY --from=frontend-builder /build/dist/ /app/frontend/dist/
+# Copy entrypoint
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Copy supervisor config + entrypoint
-COPY supervisord.conf /app/
-COPY scripts/entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
+EXPOSE 9119 9120 3000
 
-# Required dirs
-RUN mkdir -p /data /stacks /etc/nginx/upstreams /run/nginx
+ENV MARIONETTE_PORT=9119
+ENV MARIONETTE_GATEWAY_PORT=3000
+ENV MARIONETTE_RELAY_PORT=9120
 
-# Configure nginx to include marionette upstreams
-RUN echo 'include /etc/nginx/upstreams/*.conf;' >> /etc/nginx/http.d/default.conf
-
-# Placeholder so nginx -t passes when no upstreams exist yet
-RUN echo '# marionette placeholder' > /etc/nginx/upstreams/placeholder.conf
-
-EXPOSE 8000 8443
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-    CMD curl -sf http://localhost:9119/health || exit 1
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["docker-entrypoint.sh"]

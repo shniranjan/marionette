@@ -48,3 +48,4 @@ docs/project-inception-*
 # Rust build artifacts
 target/
 **/target/
+.recycle/

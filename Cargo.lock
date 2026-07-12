@@ -1414,9 +1414,10 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relay-agent"
-version = "0.2.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bollard",
  "chrono",
  "futures-util",
@@ -1425,11 +1426,8 @@ dependencies = [
  "hostname",
  "rand 0.8.6",
  "relay-protocol",
- "rustls",
- "rustls-native-certs 0.8.4",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2",
  "tokio",
  "tokio-tungstenite 0.24.0",

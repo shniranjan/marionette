@@ -2,12 +2,11 @@
 
 > Marionette: Docker management UI — **Rust backend** (Axum + bollard), **TypeScript gateway** (Fastify), **React 19 SPA**, TypeScript frontend, optional relay-agent sidecar.
 >
-> **⛔ ACTIVE EXECUTION MODE** — All agents must follow `EXECUTION_PLAN.md`.
-> This is the ONLY plan document. No design discussions. No scope creep.
-> Build phases 0-9 in order. Verify at every gate.
+> **⚡ ACTIVE BUILD** — `EXECUTION_PLAN.md` is the build script (phases, gates, hard stops).
+> **Vault docs** (`.hermes/vault/tunnel-loom/`) are the design authority — specs, protocol, architecture.
+> **Build approach:** Docker socket-proxy (no Rust on host). `python3 → Docker API → rust:1.96-alpine`.
 >
-> `.hermes/vault/RULE_BOOK.md` and `.hermes/vault/tunnel-loom/` are
-> reference only — for understanding WHY, not for changing WHAT.
+> Build phases 0-9. Verify at every gate. Phases 0-7 complete. Phases 8-9 remain.
 
 ---
 

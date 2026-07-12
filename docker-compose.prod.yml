@@ -1,0 +1,69 @@
+# Production deployment: marionette core + gateway on .59, relay agent on .17
+# Run on .59:
+#   docker compose -f docker-compose.prod.yml up -d
+# Run on .17:
+#   docker compose -f docker-compose.prod.yml --profile relay up -d
+
+version: "3.9"
+
+services:
+  # ── Marionette (core + gateway + frontend) ──
+  marionette:
+    image: ghcr.io/nous/marionette:latest
+    container_name: marionette
+    ports:
+      - "9119:9119"   # core API + relay WebSocket
+      - "3000:3000"   # gateway (proxies /api → 9119, serves / → frontend)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # local docker access
+      - marionette_data:/opt/marionette/data
+      - /opt/stacks:/opt/stacks  # compose stacks directory
+    environment:
+      - MARIONETTE_PORT=9119
+      - MARIONETTE_GATEWAY_PORT=3000
+      - RUST_LOG=info
+      - MARIONETTE_RELAY_ADDR=0.0.0.0:9120
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9119/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - marionette
+
+  # ── Relay Agent (sidecar on .17) ──
+  relay-agent:
+    image: ghcr.io/nous/marionette:latest
+    container_name: relay-agent
+    command: /usr/local/bin/relay-agent
+    ports:
+      - "9120:9120"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # read-write for image pulls, compose
+      - /opt/stacks:/opt/stacks
+      - relay_data:/opt/marionette/data
+    environment:
+      - MARIONETTE_URL=ws://192.168.1.59:9119/relay  # controller WebSocket URL
+      - MARIONETTE_TOKEN=${RELAY_TOKEN:?RELAY_TOKEN required}
+      - RELAY_PORT=9120
+      - MARIONETTE_RELAY_ADDR=0.0.0.0:9120
+      - RUST_LOG=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9120/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - relay    # Only run on hosts that need a relay agent
+    networks:
+      - marionette
+
+volumes:
+  marionette_data:
+  relay_data:
+
+networks:
+  marionette:
+    driver: bridge

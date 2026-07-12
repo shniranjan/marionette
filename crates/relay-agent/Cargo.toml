@@ -1,0 +1,26 @@
+[package]
+name = "relay-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Marionette relay agent — runs on managed Docker hosts"
+
+[dependencies]
+relay-protocol = { path = "../relay-protocol" }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+futures-util = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+bollard = "0.17"
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+x25519-dalek = "2"
+rand = "0.8"
+hostname = "0.4"
