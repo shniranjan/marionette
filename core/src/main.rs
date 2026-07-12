@@ -13,7 +13,6 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
-    // ── Logging: JSON format ────────────────────────────────────────
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
@@ -23,30 +22,31 @@ async fn main() {
 
     tracing::info!("marionette-core controller-bridge starting");
 
-    // ── Router ──────────────────────────────────────────────────────
     let app = Router::new()
-        // Health
         .route("/health", get(health))
-        // Relay WebSocket upgrade
         .route("/relay", get(ws_relay::relay_handler))
-        // Relay status API
         .route("/api/relay/status", get(relay_status))
         .route("/api/relay", get(relay_status))
         .route("/api/system", get(system_info))
+        .route("/api/system/version", get(system_version))
+        .route("/api/system/audit", get(system_audit))
+        .route("/api/system/events", get(system_events))
         .route("/api/endpoints", get(list_endpoints))
-        // ── Container routes ──────────────────────────────────
+        .route("/api/stacks", get(list_stacks))
+        .route("/api/routes", get(list_routes))
+        .route("/swarm", get(swarm_status))
+        .route("/swarm/nodes", get(swarm_nodes))
+        .route("/swarm/services", get(swarm_services))
+        .route("/swarm/configs", get(swarm_configs))
+        .route("/swarm/secrets", get(swarm_secrets))
         .route("/api/containers", get(routes::list_containers))
         .route("/api/containers/{id}", get(routes::inspect_container))
         .route("/api/containers/{id}/start", post(routes::start_container))
         .route("/api/containers/{id}/stop", post(routes::stop_container))
         .route("/api/containers/{id}/restart", post(routes::restart_container))
-        // ── Image routes ──────────────────────────────────────
         .route("/api/images", get(routes::list_images))
-        // ── Volume routes ─────────────────────────────────────
         .route("/api/volumes", get(routes::list_volumes))
-        // ── Network routes ────────────────────────────────────
         .route("/api/networks", get(routes::list_networks))
-        // ── Migration routes ──────────────────────────────────
         .route("/api/migration/analyze", post(routes::analyze_migration_handler))
         .route("/api/migration/plan/{id}", get(routes::get_migration_plan))
         .route("/api/migration/prepare", post(routes::prepare_migration_handler))
@@ -56,7 +56,6 @@ async fn main() {
         .route("/api/migration/status/{id}", get(routes::migration_status_handler))
         .route("/api/migration/events/{id}", get(routes::migration_events_handler));
 
-    // ── Bind and serve ──────────────────────────────────────────────
     let port: u16 = std::env::var("MARIONETTE_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -74,18 +73,15 @@ async fn main() {
 
 // ── Handlers ────────────────────────────────────────────────────────
 
-/// GET /health → { "status": "ok" }
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
-/// GET /api/relay/status → list of connected relay endpoints
 async fn relay_status() -> Json<serde_json::Value> {
     let relays = ws_relay::list_relays().await;
     Json(serde_json::to_value(relays).unwrap_or(serde_json::json!([])))
 }
 
-/// GET /api/system → system info (dashboard needs this)
 async fn system_info() -> Json<serde_json::Value> {
     let hostname = hostname::get()
         .ok()
@@ -106,10 +102,9 @@ async fn system_info() -> Json<serde_json::Value> {
     }))
 }
 
-/// GET /api/endpoints → list of Docker endpoints (dashboard needs this)
 async fn list_endpoints() -> Json<serde_json::Value> {
     let relays = ws_relay::list_relays().await;
-    let mut endpoints: Vec<serde_json::Value> = relays
+    let mut eps: Vec<serde_json::Value> = relays
         .iter()
         .map(|r| serde_json::json!({
             "hostname": r.hostname,
@@ -117,10 +112,61 @@ async fn list_endpoints() -> Json<serde_json::Value> {
             "type": "remote",
         }))
         .collect();
-    endpoints.push(serde_json::json!({
+    eps.push(serde_json::json!({
         "hostname": "local",
         "connected": true,
         "type": "local",
     }));
-    Json(serde_json::json!(endpoints))
+    Json(serde_json::json!(eps))
 }
+
+async fn system_version() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "api_version": "1.0",
+        "docker_api_version": "1.47",
+    }))
+}
+
+async fn system_audit() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+async fn system_events() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+
+async fn list_stacks() -> Json<serde_json::Value> {
+    let dir = std::env::var("MARIONETTE_STACKS_DIR").unwrap_or_else(|_| "/stacks".into());
+    let mut stacks = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                stacks.push(serde_json::json!({
+                    "name": name,
+                    "path": path.to_string_lossy(),
+                    "has_compose": path.join("docker-compose.yml").exists(),
+                }));
+            }
+        }
+    }
+    Json(serde_json::json!(stacks))
+}
+
+async fn list_routes() -> Json<serde_json::Value> {
+    Json(serde_json::json!([
+        "/health", "/relay",
+        "/api/relay", "/api/relay/status",
+        "/api/system", "/api/system/version", "/api/system/audit", "/api/system/events",
+        "/api/endpoints", "/api/stacks", "/api/routes",
+        "/api/containers", "/api/containers/{id}",
+        "/api/containers/{id}/start", "/api/containers/{id}/stop", "/api/containers/{id}/restart",
+        "/api/images", "/api/volumes", "/api/networks",
+        "/api/migration/analyze", "/api/migration/prepare", "/api/migration/transfer",
+        "/api/migration/switchover", "/api/migration/rollback",
+        "/api/migration/status/{id}", "/api/migration/events/{id}",
+    ]))
+}
+
+async fn swarm_status() -> Json<serde_json::Value> { Json(serde_json::json!({"active": false, "nodes": 0})) }
+async fn swarm_nodes() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+async fn swarm_services() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+async fn swarm_configs() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+async fn swarm_secrets() -> Json<serde_json::Value> { Json(serde_json::json!([])) }

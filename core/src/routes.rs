@@ -38,6 +38,8 @@ use crate::migration::{
 pub struct EndpointQuery {
     #[serde(default)]
     pub endpoint: Option<String>,
+    #[serde(default)]
+    pub include_health: Option<bool>,
 }
 
 /// Default timeout for relay commands (seconds).
@@ -67,6 +69,46 @@ fn add_container_names(containers: &mut serde_json::Value) {
                     if let Some(first) = names.first().and_then(|n| n.as_str()) {
                         obj.insert("name".into(), serde_json::Value::String(first.trim_start_matches('/').into()));
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Add health status and display label by inspecting each container
+async fn add_health_and_labels(
+    docker: &bollard::Docker,
+    containers: &mut serde_json::Value,
+) {
+    let arr = match containers.as_array_mut() {
+        Some(a) => a,
+        None => return,
+    };
+    for c in arr.iter_mut() {
+        let obj = match c.as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+        let id = match obj.get("Id").and_then(|i| i.as_str()) {
+            Some(id) => id,
+            None => continue,
+        };
+        if let Ok(inspect) = docker.inspect_container(id, None).await {
+            if let Some(state) = inspect.state {
+                if let Some(health) = state.health {
+                    obj.insert("health".into(), serde_json::Value::String(health.status));
+                }
+            }
+        }
+        if let Some(labels) = obj.get("Labels").and_then(|l| l.as_object()) {
+            if !labels.is_empty() {
+                let parts: Vec<String> = labels.iter()
+                    .filter(|(k, _)| !k.starts_with("com.docker.compose"))
+                    .take(2)
+                    .map(|(k, v)| format!("{}={}", k, v.as_str().unwrap_or("?")))
+                    .collect();
+                if !parts.is_empty() {
+                    obj.insert("label".into(), serde_json::Value::String(parts.join(", ")));
                 }
             }
         }
@@ -111,6 +153,9 @@ pub async fn list_containers(
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
     add_container_names(&mut json);
+    if params.include_health.unwrap_or(false) {
+        add_health_and_labels(&docker, &mut json).await;
+    }
     Ok(Json(json))
 }
 
@@ -250,8 +295,55 @@ pub async fn list_images(
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
-    let json = to_json(&images).map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    let mut json = to_json(&images).map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    add_image_fields(&mut json);
     Ok(Json(json))
+}
+
+/// Add frontend-friendly fields to image JSON: name, tag, size_mb, created_at
+fn add_image_fields(images: &mut serde_json::Value) {
+    let arr = match images.as_array_mut() {
+        Some(a) => a,
+        None => return,
+    };
+    arr.retain(|img| {
+        img.get("RepoTags")
+            .and_then(|t| t.as_array())
+            .map(|t| t.iter().any(|tag| tag.as_str().map_or(false, |s| s != "<none>:<none>")))
+            .unwrap_or(false)
+    });
+    for img in arr.iter_mut() {
+        let obj = match img.as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+        if let Some(tags) = obj.get("RepoTags").and_then(|t| t.as_array()) {
+            if let Some(first) = tags.first().and_then(|t| t.as_str()) {
+                if first != "<none>:<none>" {
+                    obj.insert("name".into(), serde_json::Value::String(first.into()));
+                    if let Some((_, tag)) = first.rsplit_once(':') {
+                        obj.insert("tag".into(), serde_json::Value::String(tag.into()));
+                    }
+                }
+            }
+        }
+        if let Some(size) = obj.get("Size").and_then(|s| s.as_i64()) {
+            if size > 0 {
+                obj.insert("size_mb".into(), serde_json::Value::Number(
+                    serde_json::Number::from_f64(size as f64 / 1_048_576.0).unwrap_or(0.into())
+                ));
+            }
+        }
+        if let Some(created) = obj.get("Created").and_then(|c| c.as_i64()) {
+            use chrono::TimeZone;
+            let dt = chrono::Utc.timestamp_opt(created, 0).single();
+            if let Some(dt) = dt {
+                obj.insert("created_at".into(), serde_json::Value::String(
+                    dt.format("%Y-%m-%d %H:%M").to_string()
+                ));
+            }
+        }
+    }
 }
 
 // ── Volumes ──────────────────────────────────────────────────────────
