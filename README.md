@@ -2,7 +2,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
-> **🔄 GROUND-ZERO REWRITE** — 8/10 phases complete. Rust workspace: 3 crates, 32 source files, 97 tests, 26 relay handlers. Phases 8-9 remain. [Full status →](.hermes/vault/tunnel-loom/AS_BUILT.md)
+> **🔄 GROUND-ZERO REWRITE** — ✅ All 10 phases complete (2026-07-12). Rust workspace: 3 crates, 40+ source files, 97 tests, 26 relay handlers. [Full docs →](.hermes/vault/tunnel-loom/AS_BUILT.md)
 
 A centralized Docker infrastructure management platform. Manage containers, images, volumes, networks, stacks, and Swarm clusters across multiple hosts — from a single, minimal web UI. Includes a guided container migration wizard and a compose-template migration engine with direct pipe transfer (no SSH required).
 

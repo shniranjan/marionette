@@ -6,7 +6,7 @@
 > **Vault docs** (`.hermes/vault/tunnel-loom/`) are the design authority — specs, protocol, architecture.
 > **Build approach:** Docker socket-proxy (no Rust on host). `python3 → Docker API → rust:1.96-alpine`.
 >
-> Build phases 0-9. Verify at every gate. Phases 0-7 complete. Phases 8-9 remain.
+> Build phases 0-9. Verify at every gate. ✅ All 10 phases complete (2026-07-12).
 
 ---
 
