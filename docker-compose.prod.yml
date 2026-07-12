@@ -9,7 +9,8 @@ version: "3.9"
 services:
   # ── Marionette (core + gateway + frontend) ──
   marionette:
-    image: ghcr.io/nous/marionette:latest
+    image: marionette:0.9.0
+    # For GHCR: ghcr.io/nous/marionette:latest
     container_name: marionette
     ports:
       - "9119:9119"   # core API + relay WebSocket
@@ -34,9 +35,10 @@ services:
 
   # ── Relay Agent (sidecar on .17) ──
   relay-agent:
-    image: ghcr.io/nous/marionette:latest
+    image: marionette:0.9.0
+    # For GHCR: ghcr.io/nous/marionette:latest
     container_name: relay-agent
-    command: /usr/local/bin/relay-agent
+    command: relay-agent
     ports:
       - "9120:9120"
     volumes:
