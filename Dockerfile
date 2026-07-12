@@ -41,8 +41,9 @@ COPY --from=node-builder /build/dist /opt/marionette/frontend
 # Copy supervisor config
 COPY deploy/supervisord.conf /etc/supervisord.conf
 
-# Copy TLS frontend wrapper
+# Copy TLS frontend proxy + HTTP redirect
 COPY deploy/tls-frontend.py /opt/marionette/tls-frontend.py
+COPY deploy/http-redirect.py /opt/marionette/http-redirect.py
 
 # Copy entrypoint
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
