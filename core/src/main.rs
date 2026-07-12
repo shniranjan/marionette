@@ -31,6 +31,9 @@ async fn main() {
         .route("/api/system/version", get(system_version))
         .route("/api/system/audit", get(system_audit))
         .route("/api/system/events", get(system_events))
+        .route("/api/system/config", get(system_config))
+        .route("/api/system/config", post(update_system_config))
+        .route("/api/system/token", post(generate_token))
         .route("/api/endpoints", get(list_endpoints))
         .route("/api/stacks", get(list_stacks))
         .route("/api/routes", get(list_routes))
@@ -128,8 +131,59 @@ async fn system_version() -> Json<serde_json::Value> {
     }))
 }
 
-async fn system_audit() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+async fn system_audit() -> Json<serde_json::Value> {
+    let logs: Vec<_> = vec![
+        serde_json::json!({"time": "now", "event": "marionette-core started", "level": "info"}),
+    ];
+    Json(serde_json::json!(logs))
+}
 async fn system_events() -> Json<serde_json::Value> { Json(serde_json::json!([])) }
+
+/// GET /api/system/config → current runtime configuration
+async fn system_config() -> Json<serde_json::Value> {
+    let mask = |v: &str| -> String {
+        if v.len() > 8 { format!("{}...{}", &v[..4], &v[v.len()-4..]) } else { "***".into() }
+    };
+    Json(serde_json::json!({
+        "marionette_port": std::env::var("MARIONETTE_PORT").unwrap_or_else(|_| "9119".into()),
+        "gateway_port": std::env::var("MARIONETTE_GATEWAY_PORT").unwrap_or_else(|_| "3000".into()),
+        "relay_addr": std::env::var("MARIONETTE_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:9120".into()),
+        "stacks_dir": std::env::var("MARIONETTE_STACKS_DIR").unwrap_or_else(|_| "/stacks".into()),
+        "log_level": std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+        "marionette_key": mask(&std::env::var("MARIONETTE_KEY").unwrap_or_default()),
+        "relay_token_set": std::env::var("RELAY_TOKEN").is_ok(),
+    }))
+}
+
+/// POST /api/system/config → update settings (writes env notes)
+async fn update_system_config(
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let mut updated = Vec::new();
+    if let Some(v) = body.get("log_level").and_then(|v| v.as_str()) {
+        std::env::set_var("RUST_LOG", v);
+        updated.push("log_level");
+    }
+    Json(serde_json::json!({
+        "status": "ok",
+        "updated": updated,
+        "note": "Changes apply on restart. Use docker-compose environment for permanent changes."
+    }))
+}
+
+/// POST /api/system/token → generate a relay token
+async fn generate_token() -> Json<serde_json::Value> {
+    use rand::Rng;
+    let token: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(48)
+        .map(char::from)
+        .collect();
+    Json(serde_json::json!({
+        "token": format!("mr_{}", token),
+        "note": "Set RELAY_TOKEN env var and restart relay agents",
+    }))
+}
 
 async fn list_stacks() -> Json<serde_json::Value> {
     let dir = std::env::var("MARIONETTE_STACKS_DIR").unwrap_or_else(|_| "/stacks".into());
