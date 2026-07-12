@@ -1,6 +1,6 @@
 [package]
 name = "relay-agent"
-version = "0.1.0"
+version = "0.2.3"
 edition = "2021"
 description = "Marionette relay agent — runs on managed Docker hosts"
 
@@ -24,3 +24,4 @@ hex = "0.4"
 x25519-dalek = "2"
 rand = "0.8"
 hostname = "0.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }

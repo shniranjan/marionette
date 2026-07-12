@@ -1,4 +1,5 @@
 use tracing_subscriber::EnvFilter;
+use rustls::crypto::ring::default_provider;
 
 mod auth;
 mod config;
@@ -16,6 +17,8 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+
+    default_provider().install_default().expect("rustls ring crypto provider");
 
     let version = env!("CARGO_PKG_VERSION");
     tracing::info!("relay-agent v{} starting", version);
