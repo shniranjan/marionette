@@ -32,6 +32,7 @@ async fn main() {
         // Relay status API
         .route("/api/relay/status", get(relay_status))
         .route("/api/relay", get(relay_status))
+        .route("/api/system", get(system_info))
         // ── Container routes ──────────────────────────────────
         .route("/api/containers", get(routes::list_containers))
         .route("/api/containers/{id}", get(routes::inspect_container))
@@ -81,4 +82,17 @@ async fn health() -> Json<serde_json::Value> {
 async fn relay_status() -> Json<serde_json::Value> {
     let relays = ws_relay::list_relays().await;
     Json(serde_json::to_value(relays).unwrap_or(serde_json::json!([])))
+}
+
+/// GET /api/system → system info (dashboard needs this)
+async fn system_info() -> Json<serde_json::Value> {
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "unknown".into());
+    Json(serde_json::json!({
+        "hostname": hostname,
+        "version": env!("CARGO_PKG_VERSION"),
+        "docker_endpoints": [],
+    }))
 }

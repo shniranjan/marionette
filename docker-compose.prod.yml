@@ -28,3 +28,20 @@ services:
 networks:
   marionette_marionette-net:
     external: true
+
+  # ── Relay Agent (sidecar, run with --profile relay) ──
+  relay-agent:
+    image: marionette:0.9.0
+    container_name: relay-agent
+    command: relay-agent
+    network_mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/niranjan/dockerComposer:/stacks
+    environment:
+      - MARIONETTE_URL=wss://localhost:8443/relay
+      - RELAY_TOKEN=${RELA...OKEN required}
+      - RUST_LOG=info
+    restart: unless-stopped
+    profiles:
+      - relay
