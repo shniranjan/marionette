@@ -6,7 +6,7 @@ import http.server
 import os
 import sys
 
-HTTP_PORT = int(os.environ.get("MARIONETTE_PORT", "8000"))
+HTTP_PORT = int(os.environ.get("MARIONETTE_HTTP_PORT", "8000"))
 HTTPS_PORT = int(os.environ.get("MARIONETTE_GATEWAY_PORT", "8443"))
 
 class RedirectHandler(http.server.BaseHTTPRequestHandler):

@@ -11,7 +11,7 @@ import urllib.error
 
 CERT_DIR = "/app/certs"
 PORT = int(os.environ.get("MARIONETTE_GATEWAY_PORT", "8443"))
-CORE_PORT = int(os.environ.get("MARIONETTE_CORE_PORT", "8001"))
+CORE_PORT = int(os.environ.get("MARIONETTE_PORT", "8001"))
 FRONTEND_DIR = "/opt/marionette/frontend"
 
 PROXY_PREFIXES = ("/api/", "/relay", "/health")

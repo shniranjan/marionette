@@ -54,7 +54,7 @@ async fn main() {
         .route("/api/migration/events/{id}", get(routes::migration_events_handler));
 
     // ── Bind and serve ──────────────────────────────────────────────
-    let port: u16 = std::env::var("MARIONETTE_CORE_PORT")
+    let port: u16 = std::env::var("MARIONETTE_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(9119);
